@@ -228,7 +228,12 @@ function queueUpload(blob) {
         );
 
         recordingStatus.textContent =
-          "❌ Recording upload error";
+  "❌ Recording upload error — check Console";
+
+alert(
+  "Google Drive upload error:\n\n" +
+  error.message
+);
 
         throw error;
       });
