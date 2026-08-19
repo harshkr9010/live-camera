@@ -1,19 +1,4 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <title>Watch Live</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="style.css">
-</head>
-<body>
-<div class="container">
-  <h1>📺 Watch Live</h1>
-  <input id="roomId" placeholder="Enter Room ID">
-  <button id="watchButton">Watch Live</button>
-  <video id="remoteVideo" autoplay playsinline controls style="width:100%; margin-top:20px;"></video>
-  <p id="status">Not connected</p>
-</div>
-<script src="/socket.io/socket.io.js"></script>
-<script src="viewer.js"></script>
-</body>
-</html>
+<html><head><title>Watch Live</title><meta name="viewport" content="width=device-width,initial-scale=1.0"><link rel="stylesheet" href="style.css"></head>
+<body><div class="container"><h1>📺 Watch Live</h1><input id="roomId" placeholder="Enter Room ID"><button id="watchButton">Watch Live</button><video id="remoteVideo" autoplay playsinline controls></video><p id="status">Not connected</p></div>
+<script src="/socket.io/socket.io.js"></script><script src="viewer.js"></script></body></html>
