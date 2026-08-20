@@ -8,11 +8,17 @@ let recorder;
 let uploadSessionId = null;
 let uploadedBytes = 0;
 
+// Buffer used to combine MediaRecorder chunks
+let pendingBytes = new Uint8Array(0);
+
 let recordingMimeType;
 let recordingStart;
 let segmentTimer;
 
 let pendingUpload = Promise.resolve();
+
+const CHUNK_SIZE = 262144; // 256 KiB
+
 
 const startButton =
   document.getElementById("startButton");
@@ -29,6 +35,7 @@ const statusText =
 const recordingStatus =
   document.getElementById("recordingStatus");
 
+
 const configuration = {
   iceServers: [
     {
@@ -36,6 +43,7 @@ const configuration = {
     }
   ]
 };
+
 
 // ======================================================
 // MIME TYPE
@@ -55,6 +63,7 @@ function getMimeType() {
     ) || ""
   );
 }
+
 
 // ======================================================
 // FILE NAME
@@ -77,11 +86,16 @@ function fileName(timestamp) {
   );
 }
 
+
 // ======================================================
-// CREATE SERVER UPLOAD SESSION
+// CREATE GOOGLE DRIVE SESSION
 // ======================================================
 
 async function createSession() {
+
+  console.log(
+    "Creating Google Drive upload session..."
+  );
 
   const response =
     await fetch(
@@ -118,7 +132,7 @@ async function createSession() {
   if (!data.sessionId) {
 
     throw new Error(
-      "Server did not return an upload session."
+      "Server did not return upload session."
     );
   }
 
@@ -127,34 +141,69 @@ async function createSession() {
 
   uploadedBytes = 0;
 
+  pendingBytes =
+    new Uint8Array(0);
+
   console.log(
-    "Upload session created:",
+    "Google Drive upload session created:",
     uploadSessionId
   );
 }
 
+
 // ======================================================
-// UPLOAD CHUNK THROUGH RENDER
+// ADD MEDIARECORDER CHUNK TO BUFFER
 // ======================================================
 
-async function uploadChunk(blob) {
+async function addToBuffer(blob) {
 
-  if (
-    !uploadSessionId ||
-    !blob ||
-    !blob.size
-  ) {
-    return;
-  }
+  const newBytes =
+    new Uint8Array(
+      await blob.arrayBuffer()
+    );
+
+  const combined =
+    new Uint8Array(
+      pendingBytes.length +
+      newBytes.length
+    );
+
+  combined.set(
+    pendingBytes,
+    0
+  );
+
+  combined.set(
+    newBytes,
+    pendingBytes.length
+  );
+
+  pendingBytes =
+    combined;
+
+  console.log(
+    "Buffered bytes:",
+    pendingBytes.length
+  );
+}
+
+
+// ======================================================
+// UPLOAD ONE EXACT 256 KiB BLOCK
+// ======================================================
+
+async function uploadBlock(bytes) {
 
   const start =
     uploadedBytes;
 
   const end =
-    start + blob.size - 1;
+    start +
+    bytes.length -
+    1;
 
   console.log(
-    `Sending chunk ${start}-${end} to Render`
+    `Uploading Google Drive block: ${start}-${end} (${bytes.length} bytes)`
   );
 
   const response =
@@ -174,9 +223,14 @@ async function uploadChunk(blob) {
             `bytes ${start}-${end}/*`
         },
 
-        body: blob
+        body: bytes
       }
     );
+
+
+  // ==================================================
+  // GOOGLE DRIVE FILE FINISHED
+  // ==================================================
 
   if (
     response.status === 200 ||
@@ -187,11 +241,16 @@ async function uploadChunk(blob) {
       end + 1;
 
     console.log(
-      "Google Drive file completed."
+      "Google Drive upload completed."
     );
 
     return;
   }
+
+
+  // ==================================================
+  // MORE DATA REQUIRED
+  // ==================================================
 
   if (
     response.status === 308
@@ -233,6 +292,7 @@ async function uploadChunk(blob) {
     return;
   }
 
+
   const errorText =
     await response.text();
 
@@ -241,8 +301,36 @@ async function uploadChunk(blob) {
   );
 }
 
+
 // ======================================================
-// QUEUE UPLOAD
+// PROCESS BUFFER
+// ======================================================
+
+async function processBuffer() {
+
+  while (
+    pendingBytes.length >=
+    CHUNK_SIZE
+  ) {
+
+    const block =
+      pendingBytes.slice(
+        0,
+        CHUNK_SIZE
+      );
+
+    pendingBytes =
+      pendingBytes.slice(
+        CHUNK_SIZE
+      );
+
+    await uploadBlock(block);
+  }
+}
+
+
+// ======================================================
+// QUEUE MEDIARECORDER CHUNK
 // ======================================================
 
 function queueUpload(blob) {
@@ -256,9 +344,13 @@ function queueUpload(blob) {
 
   pendingUpload =
     pendingUpload
-      .then(() =>
-        uploadChunk(blob)
-      )
+      .then(async () => {
+
+        await addToBuffer(blob);
+
+        await processBuffer();
+
+      })
       .catch(error => {
 
         console.error(
@@ -272,6 +364,104 @@ function queueUpload(blob) {
         throw error;
       });
 }
+
+
+// ======================================================
+// FINALIZE CURRENT RECORDING
+// ======================================================
+
+async function finalizeUpload() {
+
+  // Wait for all MediaRecorder chunks
+  // already queued to finish.
+
+  await pendingUpload;
+
+
+  // If nothing remains, we're done.
+
+  if (
+    pendingBytes.length === 0
+  ) {
+
+    console.log(
+      "No remaining bytes to upload."
+    );
+
+    return;
+  }
+
+
+  const finalBytes =
+    pendingBytes;
+
+  const start =
+    uploadedBytes;
+
+  const end =
+    start +
+    finalBytes.length -
+    1;
+
+  const total =
+    end + 1;
+
+
+  console.log(
+    `Uploading FINAL block: ${start}-${end}/${total} (${finalBytes.length} bytes)`
+  );
+
+
+  const response =
+    await fetch(
+      "/api/drive/chunk",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/octet-stream",
+
+          "X-Upload-Session":
+            uploadSessionId,
+
+          // IMPORTANT:
+          // This tells Google this is
+          // the final request.
+          "Content-Range":
+            `bytes ${start}-${end}/${total}`
+        },
+
+        body: finalBytes
+      }
+    );
+
+
+  if (
+    response.status !== 200 &&
+    response.status !== 201
+  ) {
+
+    const errorText =
+      await response.text();
+
+    throw new Error(
+      `Final Drive upload failed: ${response.status} ${errorText}`
+    );
+  }
+
+
+  uploadedBytes =
+    total;
+
+  pendingBytes =
+    new Uint8Array(0);
+
+  console.log(
+    `🎉 Google Drive file finalized: ${total} bytes`
+  );
+}
+
 
 // ======================================================
 // START RECORDING
@@ -289,10 +479,13 @@ async function startRecording() {
     );
   }
 
+
   recordingStart =
     Date.now();
 
+
   await createSession();
+
 
   recorder =
     new MediaRecorder(
@@ -308,6 +501,11 @@ async function startRecording() {
           128000
       }
     );
+
+
+  // ====================================================
+  // NEW MEDIARECORDER CHUNK
+  // ====================================================
 
   recorder.ondataavailable =
     event => {
@@ -329,19 +527,33 @@ async function startRecording() {
       }
     };
 
+
+  // ====================================================
+  // RECORDING STOPPED
+  // ====================================================
+
   recorder.onstop =
     async () => {
 
+      console.log(
+        "Recording segment stopped."
+      );
+
       try {
 
-        await pendingUpload;
+        await finalizeUpload();
 
         recordingStatus.textContent =
           "✅ Recording saved to Google Drive";
 
+        console.log(
+          "🎥 Recording successfully saved."
+        );
+
       } catch (error) {
 
         console.error(
+          "Final recording upload error:",
           error
         );
 
@@ -350,7 +562,11 @@ async function startRecording() {
       }
     };
 
-  // Create a chunk every 10 seconds
+
+  // ====================================================
+  // START MEDIA RECORDER
+  // ====================================================
+
   recorder.start(10000);
 
   recordingStatus.textContent =
@@ -360,7 +576,11 @@ async function startRecording() {
     "Recording started."
   );
 
-  // New 1-hour file
+
+  // ====================================================
+  // ONE HOUR SEGMENT
+  // ====================================================
+
   segmentTimer =
     setTimeout(
       rotateRecording,
@@ -368,8 +588,9 @@ async function startRecording() {
     );
 }
 
+
 // ======================================================
-// ROTATE EVERY HOUR
+// ROTATE RECORDING EVERY ONE HOUR
 // ======================================================
 
 async function rotateRecording() {
@@ -385,20 +606,48 @@ async function rotateRecording() {
     return;
   }
 
+
   console.log(
-    "One hour reached. Creating new recording."
+    "⏰ One hour reached."
   );
+
+  console.log(
+    "Stopping current recording..."
+  );
+
+
+  // stop() causes MediaRecorder
+  // to send its final dataavailable event.
 
   recorder.stop();
 
-  // Allow final MediaRecorder chunk
+
+  // Wait for recorder.onstop to
+  // finish the Google Drive upload.
+
   await new Promise(
-    resolve =>
-      setTimeout(
-        resolve,
-        1500
-      )
+    resolve => {
+
+      const check =
+        setInterval(() => {
+
+          if (
+            recorder.state ===
+            "inactive"
+          ) {
+
+            clearInterval(
+              check
+            );
+
+            resolve();
+          }
+
+        }, 500);
+
+    }
   );
+
 
   try {
 
@@ -407,13 +656,18 @@ async function rotateRecording() {
   } catch (error) {
 
     console.error(
-      "Previous upload failed:",
+      "Previous segment upload failed:",
       error
     );
   }
 
+
+  // Start a completely new
+  // Google Drive file.
+
   await startRecording();
 }
+
 
 // ======================================================
 // START CAMERA
@@ -435,8 +689,10 @@ startButton.addEventListener(
       return;
     }
 
+
     startButton.disabled =
       true;
+
 
     try {
 
@@ -448,18 +704,23 @@ startButton.addEventListener(
             audio: true
           });
 
+
       localVideo.srcObject =
         localStream;
+
 
       socket.emit(
         "join-room",
         roomId
       );
 
+
       statusText.textContent =
         "Camera started. Waiting for viewer...";
 
+
       await startRecording();
+
 
     } catch (error) {
 
@@ -478,6 +739,7 @@ startButton.addEventListener(
   }
 );
 
+
 // ======================================================
 // VIEWER JOINED
 // ======================================================
@@ -490,10 +752,12 @@ socket.on(
       return;
     }
 
+
     peerConnection =
       new RTCPeerConnection(
         configuration
       );
+
 
     localStream
       .getTracks()
@@ -504,6 +768,7 @@ socket.on(
           localStream
         );
       });
+
 
     peerConnection.onicecandidate =
       event => {
@@ -521,14 +786,17 @@ socket.on(
         }
       };
 
+
     const offer =
       await peerConnection
         .createOffer();
+
 
     await peerConnection
       .setLocalDescription(
         offer
       );
+
 
     socket.emit(
       "offer",
@@ -538,13 +806,15 @@ socket.on(
       }
     );
 
+
     statusText.textContent =
       "Viewer connected. Connecting...";
   }
 );
 
+
 // ======================================================
-// ANSWER
+// ANSWER FROM VIEWER
 // ======================================================
 
 socket.on(
@@ -555,6 +825,7 @@ socket.on(
       return;
     }
 
+
     await peerConnection
       .setRemoteDescription(
         new RTCSessionDescription(
@@ -562,13 +833,15 @@ socket.on(
         )
       );
 
+
     statusText.textContent =
       "🔴 LIVE";
   }
 );
 
+
 // ======================================================
-// ICE
+// ICE CANDIDATE
 // ======================================================
 
 socket.on(
@@ -578,6 +851,7 @@ socket.on(
     if (!peerConnection) {
       return;
     }
+
 
     try {
 
@@ -598,6 +872,7 @@ socket.on(
   }
 );
 
+
 // ======================================================
 // CLEANUP
 // ======================================================
@@ -607,17 +882,21 @@ window.addEventListener(
   () => {
 
     if (segmentTimer) {
+
       clearTimeout(
         segmentTimer
       );
     }
 
+
     if (
       recorder &&
       recorder.state !== "inactive"
     ) {
+
       recorder.stop();
     }
+
 
     if (localStream) {
 
