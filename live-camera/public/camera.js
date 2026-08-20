@@ -8,7 +8,7 @@ let recorder;
 let uploadSessionId = null;
 let uploadedBytes = 0;
 
-// Buffer used to combine MediaRecorder chunks
+// Buffer for Google Drive's 256 KiB requirement
 let pendingBytes = new Uint8Array(0);
 
 let recordingMimeType;
@@ -17,7 +17,13 @@ let segmentTimer;
 
 let pendingUpload = Promise.resolve();
 
-const CHUNK_SIZE = 262144; // 256 KiB
+const CHUNK_SIZE = 262144;
+
+// ======================================================
+// 10 MINUTE RECORDING
+// ======================================================
+
+const RECORDING_DURATION = 10 * 60 * 1000;
 
 
 const startButton =
@@ -46,7 +52,7 @@ const configuration = {
 
 
 // ======================================================
-// MIME TYPE
+// FIND SUPPORTED MIME TYPE
 // ======================================================
 
 function getMimeType() {
@@ -66,7 +72,7 @@ function getMimeType() {
 
 
 // ======================================================
-// FILE NAME
+// CREATE FILE NAME
 // ======================================================
 
 function fileName(timestamp) {
@@ -88,7 +94,7 @@ function fileName(timestamp) {
 
 
 // ======================================================
-// CREATE GOOGLE DRIVE SESSION
+// CREATE GOOGLE DRIVE UPLOAD SESSION
 // ======================================================
 
 async function createSession() {
@@ -189,7 +195,7 @@ async function addToBuffer(blob) {
 
 
 // ======================================================
-// UPLOAD ONE EXACT 256 KiB BLOCK
+// UPLOAD 256 KiB BLOCK
 // ======================================================
 
 async function uploadBlock(bytes) {
@@ -203,7 +209,7 @@ async function uploadBlock(bytes) {
     1;
 
   console.log(
-    `Uploading Google Drive block: ${start}-${end} (${bytes.length} bytes)`
+    `Uploading block ${start}-${end} (${bytes.length} bytes)`
   );
 
   const response =
@@ -228,10 +234,7 @@ async function uploadBlock(bytes) {
     );
 
 
-  // ==================================================
-  // GOOGLE DRIVE FILE FINISHED
-  // ==================================================
-
+  // Upload completed
   if (
     response.status === 200 ||
     response.status === 201
@@ -248,10 +251,7 @@ async function uploadBlock(bytes) {
   }
 
 
-  // ==================================================
-  // MORE DATA REQUIRED
-  // ==================================================
-
+  // More data required
   if (
     response.status === 308
   ) {
@@ -330,7 +330,7 @@ async function processBuffer() {
 
 
 // ======================================================
-// QUEUE MEDIARECORDER CHUNK
+// QUEUE UPLOAD
 // ======================================================
 
 function queueUpload(blob) {
@@ -367,25 +367,21 @@ function queueUpload(blob) {
 
 
 // ======================================================
-// FINALIZE CURRENT RECORDING
+// FINALIZE CURRENT 10-MINUTE FILE
 // ======================================================
 
 async function finalizeUpload() {
 
-  // Wait for all MediaRecorder chunks
-  // already queued to finish.
-
   await pendingUpload;
 
 
-  // If nothing remains, we're done.
-
+  // Nothing remaining
   if (
     pendingBytes.length === 0
   ) {
 
     console.log(
-      "No remaining bytes to upload."
+      "No remaining bytes."
     );
 
     return;
@@ -408,7 +404,7 @@ async function finalizeUpload() {
 
 
   console.log(
-    `Uploading FINAL block: ${start}-${end}/${total} (${finalBytes.length} bytes)`
+    `Uploading final block ${start}-${end}/${total}`
   );
 
 
@@ -425,9 +421,6 @@ async function finalizeUpload() {
           "X-Upload-Session":
             uploadSessionId,
 
-          // IMPORTANT:
-          // This tells Google this is
-          // the final request.
           "Content-Range":
             `bytes ${start}-${end}/${total}`
         },
@@ -504,7 +497,7 @@ async function startRecording() {
 
 
   // ====================================================
-  // NEW MEDIARECORDER CHUNK
+  // NEW CHUNK
   // ====================================================
 
   recorder.ondataavailable =
@@ -536,7 +529,7 @@ async function startRecording() {
     async () => {
 
       console.log(
-        "Recording segment stopped."
+        "10-minute recording stopped."
       );
 
       try {
@@ -563,14 +556,16 @@ async function startRecording() {
     };
 
 
-  // ====================================================
-  // START MEDIA RECORDER
-  // ====================================================
+  // Record in small browser chunks.
+  // The code combines them before
+  // sending to Google Drive.
 
   recorder.start(10000);
 
+
   recordingStatus.textContent =
     "🔴 Recording to Google Drive";
+
 
   console.log(
     "Recording started."
@@ -578,19 +573,19 @@ async function startRecording() {
 
 
   // ====================================================
-  // ONE HOUR SEGMENT
+  // STOP AFTER 10 MINUTES
   // ====================================================
 
   segmentTimer =
     setTimeout(
       rotateRecording,
-      60 * 60 * 1000
+      RECORDING_DURATION
     );
 }
 
 
 // ======================================================
-// ROTATE RECORDING EVERY ONE HOUR
+// ROTATE EVERY 10 MINUTES
 // ======================================================
 
 async function rotateRecording() {
@@ -598,6 +593,7 @@ async function rotateRecording() {
   clearTimeout(
     segmentTimer
   );
+
 
   if (
     !recorder ||
@@ -608,22 +604,20 @@ async function rotateRecording() {
 
 
   console.log(
-    "⏰ One hour reached."
+    "⏰ 10 minutes reached."
   );
+
 
   console.log(
     "Stopping current recording..."
   );
 
 
-  // stop() causes MediaRecorder
-  // to send its final dataavailable event.
-
+  // This creates the final MediaRecorder chunk.
   recorder.stop();
 
 
-  // Wait for recorder.onstop to
-  // finish the Google Drive upload.
+  // Wait for MediaRecorder to become inactive.
 
   await new Promise(
     resolve => {
@@ -679,6 +673,7 @@ startButton.addEventListener(
 
     roomId =
       roomInput.value.trim();
+
 
     if (!roomId) {
 
@@ -814,7 +809,7 @@ socket.on(
 
 
 // ======================================================
-// ANSWER FROM VIEWER
+// ANSWER
 // ======================================================
 
 socket.on(
