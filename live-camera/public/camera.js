@@ -5,7 +5,7 @@ let localStream;
 let peerConnection;
 let recorder;
 
-let driveUploadUrl = null;
+let uploadSessionId = null;
 let uploadedBytes = 0;
 
 let recordingMimeType;
@@ -37,9 +37,8 @@ const configuration = {
   ]
 };
 
-
 // ======================================================
-// FIND SUPPORTED RECORDING FORMAT
+// MIME TYPE
 // ======================================================
 
 function getMimeType() {
@@ -57,17 +56,16 @@ function getMimeType() {
   );
 }
 
-
 // ======================================================
-// CREATE FILE NAME
+// FILE NAME
 // ======================================================
 
 function fileName(timestamp) {
 
   const d = new Date(timestamp);
 
-  const pad = number =>
-    String(number).padStart(2, "0");
+  const pad =
+    n => String(n).padStart(2, "0");
 
   return (
     `camera-${d.getFullYear()}-` +
@@ -79,220 +77,142 @@ function fileName(timestamp) {
   );
 }
 
-
 // ======================================================
-// CREATE GOOGLE DRIVE UPLOAD SESSION
+// CREATE SERVER UPLOAD SESSION
 // ======================================================
 
 async function createSession() {
 
-  console.log(
-    "Creating Google Drive upload session..."
-  );
+  const response =
+    await fetch(
+      "/api/drive/session",
+      {
+        method: "POST",
 
-  const response = await fetch(
-    "/api/drive/session",
-    {
-      method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
 
-      headers: {
-        "Content-Type": "application/json"
-      },
+        body: JSON.stringify({
+          fileName:
+            fileName(recordingStart),
 
-      body: JSON.stringify({
-        fileName: fileName(recordingStart),
-        mimeType: recordingMimeType
-      })
-    }
-  );
+          mimeType:
+            recordingMimeType
+        })
+      }
+    );
 
-  const data = await response.json();
+  const data =
+    await response.json();
 
   if (!response.ok) {
+
     throw new Error(
       data.error ||
       "Drive session failed."
     );
   }
 
-  if (!data.uploadUrl) {
+  if (!data.sessionId) {
+
     throw new Error(
-      "Google Drive did not return an upload URL."
+      "Server did not return an upload session."
     );
   }
 
-  driveUploadUrl =
-    data.uploadUrl;
+  uploadSessionId =
+    data.sessionId;
 
   uploadedBytes = 0;
 
   console.log(
-    "Google Drive upload session created."
+    "Upload session created:",
+    uploadSessionId
   );
 }
 
-
 // ======================================================
-// GET CURRENT GOOGLE DRIVE UPLOAD POSITION
-// ======================================================
-
-async function getUploadPosition() {
-
-  const response = await fetch(
-    driveUploadUrl,
-    {
-      method: "PUT",
-
-      headers: {
-        "Content-Range": "bytes */*"
-      }
-    }
-  );
-
-  // 308 means Google is telling us
-  // how many bytes it already has.
-
-  if (response.status === 308) {
-
-    const range =
-      response.headers.get("Range");
-
-    if (!range) {
-      return 0;
-    }
-
-    const match =
-      range.match(/bytes=0-(\d+)/);
-
-    if (!match) {
-      return 0;
-    }
-
-    return Number(match[1]) + 1;
-  }
-
-  // If Google returns 200/201,
-  // the upload is already complete.
-
-  if (
-    response.status === 200 ||
-    response.status === 201
-  ) {
-    return uploadedBytes;
-  }
-
-  throw new Error(
-    `Could not check Drive upload position: ${response.status}`
-  );
-}
-
-
-// ======================================================
-// UPLOAD ONE CHUNK TO GOOGLE DRIVE
+// UPLOAD CHUNK THROUGH RENDER
 // ======================================================
 
 async function uploadChunk(blob) {
 
   if (
-    !driveUploadUrl ||
+    !uploadSessionId ||
     !blob ||
     !blob.size
   ) {
     return;
   }
 
-  let attempts = 0;
+  const start =
+    uploadedBytes;
 
-  while (attempts < 5) {
+  const end =
+    start + blob.size - 1;
 
-    attempts++;
+  console.log(
+    `Sending chunk ${start}-${end} to Render`
+  );
 
-    // Ask Google what it actually has.
-    // This prevents offset mismatch.
-    try {
-      uploadedBytes =
-        await getUploadPosition();
-    } catch (error) {
+  const response =
+    await fetch(
+      "/api/drive/chunk",
+      {
+        method: "POST",
 
-      console.warn(
-        "Could not get upload position:",
-        error
-      );
-    }
+        headers: {
+          "Content-Type":
+            "application/octet-stream",
 
-    const start =
-      uploadedBytes;
+          "X-Upload-Session":
+            uploadSessionId,
 
-    const end =
-      start + blob.size - 1;
+          "Content-Range":
+            `bytes ${start}-${end}/*`
+        },
 
-    console.log(
-      `Uploading chunk ${start}-${end}`
+        body: blob
+      }
     );
 
-    const response =
-      await fetch(
-        driveUploadUrl,
-        {
-          method: "PUT",
+  if (
+    response.status === 200 ||
+    response.status === 201
+  ) {
 
-          headers: {
-            "Content-Type":
-              recordingMimeType,
+    uploadedBytes =
+      end + 1;
 
-            "Content-Range":
-              `bytes ${start}-${end}/*`
-          },
+    console.log(
+      "Google Drive file completed."
+    );
 
-          body: blob
-        }
+    return;
+  }
+
+  if (
+    response.status === 308
+  ) {
+
+    const range =
+      response.headers.get(
+        "Range"
       );
 
+    if (range) {
 
-    // ==================================================
-    // UPLOAD FINISHED
-    // ==================================================
+      const match =
+        range.match(
+          /bytes=0-(\d+)/
+        );
 
-    if (
-      response.status === 200 ||
-      response.status === 201
-    ) {
+      if (match) {
 
-      uploadedBytes =
-        end + 1;
-
-      console.log(
-        `Google Drive upload completed. ${uploadedBytes} bytes`
-      );
-
-      return;
-    }
-
-
-    // ==================================================
-    // CHUNK ACCEPTED
-    // ==================================================
-
-    if (response.status === 308) {
-
-      const range =
-        response.headers.get("Range");
-
-      if (range) {
-
-        const match =
-          range.match(/bytes=0-(\d+)/);
-
-        if (match) {
-
-          uploadedBytes =
-            Number(match[1]) + 1;
-
-        } else {
-
-          uploadedBytes =
-            end + 1;
-        }
+        uploadedBytes =
+          Number(match[1]) + 1;
 
       } else {
 
@@ -300,76 +220,29 @@ async function uploadChunk(blob) {
           end + 1;
       }
 
-      console.log(
-        `Google Drive confirmed ${uploadedBytes} bytes`
-      );
+    } else {
 
-      return;
+      uploadedBytes =
+        end + 1;
     }
 
-
-    // ==================================================
-    // OFFSET MISMATCH / TEMPORARY GOOGLE ERROR
-    // ==================================================
-
-    if (
-      response.status === 400 ||
-      response.status === 409 ||
-      response.status === 503
-    ) {
-
-      console.warn(
-        `Drive returned ${response.status}. Rechecking upload position...`
-      );
-
-      try {
-
-        uploadedBytes =
-          await getUploadPosition();
-
-        console.log(
-          `Corrected upload position: ${uploadedBytes}`
-        );
-
-        continue;
-
-      } catch (error) {
-
-        console.error(
-          "Could not recover upload position:",
-          error
-        );
-
-        await new Promise(
-          resolve =>
-            setTimeout(resolve, 1000)
-        );
-
-        continue;
-      }
-    }
-
-
-    // ==================================================
-    // OTHER ERROR
-    // ==================================================
-
-    const errorText =
-      await response.text();
-
-    throw new Error(
-      `Drive upload failed: ${response.status} ${errorText}`
+    console.log(
+      `Google Drive confirmed ${uploadedBytes} bytes`
     );
+
+    return;
   }
 
+  const errorText =
+    await response.text();
+
   throw new Error(
-    "Drive upload failed after multiple attempts."
+    `Drive upload failed: ${response.status} ${errorText}`
   );
 }
 
-
 // ======================================================
-// QUEUE CHUNKS
+// QUEUE UPLOAD
 // ======================================================
 
 function queueUpload(blob) {
@@ -399,7 +272,6 @@ function queueUpload(blob) {
         throw error;
       });
 }
-
 
 // ======================================================
 // START RECORDING
@@ -437,11 +309,6 @@ async function startRecording() {
       }
     );
 
-
-  // ====================================================
-  // NEW DATA CHUNK
-  // ====================================================
-
   recorder.ondataavailable =
     event => {
 
@@ -451,7 +318,9 @@ async function startRecording() {
       ) {
 
         console.log(
-          `New recording chunk: ${event.data.size} bytes`
+          "New recording chunk:",
+          event.data.size,
+          "bytes"
         );
 
         queueUpload(
@@ -460,25 +329,12 @@ async function startRecording() {
       }
     };
 
-
-  // ====================================================
-  // RECORDING STOPPED
-  // ====================================================
-
   recorder.onstop =
     async () => {
-
-      console.log(
-        "Recording segment stopped."
-      );
 
       try {
 
         await pendingUpload;
-
-        console.log(
-          "Recording segment upload finished."
-        );
 
         recordingStatus.textContent =
           "✅ Recording saved to Google Drive";
@@ -486,7 +342,6 @@ async function startRecording() {
       } catch (error) {
 
         console.error(
-          "Final upload error:",
           error
         );
 
@@ -495,11 +350,7 @@ async function startRecording() {
       }
     };
 
-
-  // ====================================================
-  // START MEDIA RECORDER
-  // ====================================================
-
+  // Create a chunk every 10 seconds
   recorder.start(10000);
 
   recordingStatus.textContent =
@@ -509,11 +360,7 @@ async function startRecording() {
     "Recording started."
   );
 
-
-  // ====================================================
-  // ONE HOUR SEGMENT
-  // ====================================================
-
+  // New 1-hour file
   segmentTimer =
     setTimeout(
       rotateRecording,
@@ -521,9 +368,8 @@ async function startRecording() {
     );
 }
 
-
 // ======================================================
-// ROTATE RECORDING EVERY ONE HOUR
+// ROTATE EVERY HOUR
 // ======================================================
 
 async function rotateRecording() {
@@ -540,17 +386,18 @@ async function rotateRecording() {
   }
 
   console.log(
-    "One hour reached. Starting new recording segment..."
+    "One hour reached. Creating new recording."
   );
 
   recorder.stop();
 
-  // Give MediaRecorder time to fire
-  // the final dataavailable event.
-
+  // Allow final MediaRecorder chunk
   await new Promise(
     resolve =>
-      setTimeout(resolve, 1500)
+      setTimeout(
+        resolve,
+        1500
+      )
   );
 
   try {
@@ -560,18 +407,16 @@ async function rotateRecording() {
   } catch (error) {
 
     console.error(
-      "Previous segment upload failed:",
+      "Previous upload failed:",
       error
     );
   }
 
-  // Create a completely new Drive file.
   await startRecording();
 }
 
-
 // ======================================================
-// START CAMERA BUTTON
+// START CAMERA
 // ======================================================
 
 startButton.addEventListener(
@@ -596,7 +441,8 @@ startButton.addEventListener(
     try {
 
       localStream =
-        await navigator.mediaDevices
+        await navigator
+          .mediaDevices
           .getUserMedia({
             video: true,
             audio: true
@@ -632,7 +478,6 @@ startButton.addEventListener(
   }
 );
 
-
 // ======================================================
 // VIEWER JOINED
 // ======================================================
@@ -660,7 +505,6 @@ socket.on(
         );
       });
 
-
     peerConnection.onicecandidate =
       event => {
 
@@ -676,7 +520,6 @@ socket.on(
           );
         }
       };
-
 
     const offer =
       await peerConnection
@@ -700,9 +543,8 @@ socket.on(
   }
 );
 
-
 // ======================================================
-// ANSWER FROM VIEWER
+// ANSWER
 // ======================================================
 
 socket.on(
@@ -725,9 +567,8 @@ socket.on(
   }
 );
 
-
 // ======================================================
-// ICE CANDIDATE
+// ICE
 // ======================================================
 
 socket.on(
@@ -757,7 +598,6 @@ socket.on(
   }
 );
 
-
 // ======================================================
 // CLEANUP
 // ======================================================
@@ -767,7 +607,6 @@ window.addEventListener(
   () => {
 
     if (segmentTimer) {
-
       clearTimeout(
         segmentTimer
       );
@@ -777,7 +616,6 @@ window.addEventListener(
       recorder &&
       recorder.state !== "inactive"
     ) {
-
       recorder.stop();
     }
 
