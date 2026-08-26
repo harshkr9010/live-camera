@@ -17,7 +17,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: "2mb" }));
 
-// Raw video chunks for the Google Drive proxy
 app.use(
   "/api/drive/chunk",
   express.raw({
@@ -35,24 +34,15 @@ app.get("/", (req, res) => {
 });
 
 // ======================================================
-// GOOGLE OAUTH CONFIGURATION
+// GOOGLE OAUTH
 // ======================================================
 
 function getOAuthClient() {
-  const clientId =
-    process.env.GOOGLE_CLIENT_ID;
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
 
-  const clientSecret =
-    process.env.GOOGLE_CLIENT_SECRET;
-
-  const redirectUri =
-    process.env.GOOGLE_REDIRECT_URI;
-
-  if (
-    !clientId ||
-    !clientSecret ||
-    !redirectUri
-  ) {
+  if (!clientId || !clientSecret || !redirectUri) {
     throw new Error(
       "Google OAuth credentials are not configured."
     );
@@ -66,46 +56,39 @@ function getOAuthClient() {
 }
 
 // ======================================================
-// GOOGLE OAUTH START
+// GOOGLE AUTHORIZATION
 // ======================================================
 
-app.get(
-  "/auth/google",
-  (req, res) => {
-    try {
-      const oauth2Client =
-        getOAuthClient();
+app.get("/auth/google", (req, res) => {
+  try {
+    const oauth2Client = getOAuthClient();
 
-      const authUrl =
-        oauth2Client.generateAuthUrl({
-          access_type: "offline",
+    const authUrl =
+      oauth2Client.generateAuthUrl({
+        access_type: "offline",
+        prompt: "consent",
+        scope: [
+          "https://www.googleapis.com/auth/drive"
+        ]
+      });
 
-          prompt: "consent",
+    res.redirect(authUrl);
 
-          scope: [
-            "https://www.googleapis.com/auth/drive"
-          ]
-        });
+  } catch (error) {
+    console.error(
+      "Google OAuth start error:",
+      error
+    );
 
-      res.redirect(authUrl);
-
-    } catch (error) {
-
-      console.error(
-        "Google OAuth start error:",
-        error
-      );
-
-      res.status(500).send(
-        "Google OAuth configuration error: " +
-        error.message
-      );
-    }
+    res.status(500).send(
+      "Google OAuth configuration error: " +
+      error.message
+    );
   }
-);
+});
 
 // ======================================================
-// GOOGLE OAUTH CALLBACK
+// GOOGLE CALLBACK
 // ======================================================
 
 app.get(
@@ -114,8 +97,7 @@ app.get(
 
     try {
 
-      const code =
-        req.query.code;
+      const code = req.query.code;
 
       if (!code) {
         return res.status(400).send(
@@ -127,124 +109,63 @@ app.get(
         getOAuthClient();
 
       const { tokens } =
-        await oauth2Client.getToken(
-          code
-        );
+        await oauth2Client.getToken(code);
 
       console.log(
         "Google OAuth authorization successful."
       );
 
-      // Google should normally provide a refresh token
-      // because access_type is offline and prompt is consent.
-
       if (!tokens.refresh_token) {
-
-        return res.status(400).send(`
-          <!DOCTYPE html>
-
-          <html>
-            <head>
-              <title>Authorization Error</title>
-            </head>
-
-            <body
-              style="
-                font-family: Arial;
-                padding: 30px;
-              "
-            >
-
-              <h2>
-                No refresh token received ❌
-              </h2>
-
-              <p>
-                Google did not return a refresh token.
-              </p>
-
-              <p>
-                Try the Google authorization process again.
-              </p>
-
-            </body>
-          </html>
-        `);
+        return res.status(400).send(
+          "Google did not return a refresh token. " +
+          "Authorize again with consent."
+        );
       }
-
-      // Escape HTML-sensitive characters before displaying
-      // the token in the browser.
-
-      const refreshToken =
-        String(tokens.refresh_token)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#039;");
 
       res.send(`
         <!DOCTYPE html>
-
         <html>
-          <head>
-            <title>
-              Google Drive Authorization Complete
-            </title>
-          </head>
+        <head>
+          <title>Google Drive Authorization</title>
+        </head>
 
-          <body
+        <body style="
+          font-family:Arial;
+          padding:30px;
+        ">
+
+          <h2>
+            Google Drive authorization successful ✅
+          </h2>
+
+          <p>
+            Put this value into Render as:
+          </p>
+
+          <h3>
+            GOOGLE_REFRESH_TOKEN
+          </h3>
+
+          <textarea
+            readonly
             style="
-              font-family: Arial, sans-serif;
-              padding: 30px;
-              line-height: 1.6;
+              width:100%;
+              max-width:900px;
+              height:150px;
+              font-family:monospace;
             "
-          >
+          >${String(tokens.refresh_token)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;")}</textarea>
 
-            <h2>
-              Google Drive authorization successful ✅
-            </h2>
+          <p>
+            Keep this token private.
+          </p>
 
-            <p>
-              Your Google Drive account has been authorized.
-            </p>
-
-            <h3>
-              Next step
-            </h3>
-
-            <p>
-              In Render, create this environment variable:
-            </p>
-
-            <p>
-              <strong>
-                GOOGLE_REFRESH_TOKEN
-              </strong>
-            </p>
-
-            <textarea
-              readonly
-              style="
-                width: 100%;
-                max-width: 900px;
-                height: 120px;
-                font-family: monospace;
-                font-size: 14px;
-              "
-            >${refreshToken}</textarea>
-
-            <p>
-              Copy the token and add it to Render.
-            </p>
-
-            <p>
-              <strong>
-                Do not share this token with anyone.
-              </strong>
-            </p>
-
-          </body>
+        </body>
         </html>
       `);
 
@@ -264,7 +185,7 @@ app.get(
 );
 
 // ======================================================
-// GOOGLE DRIVE AUTHENTICATION
+// GOOGLE DRIVE CLIENT
 // ======================================================
 
 function getDrive() {
@@ -273,9 +194,8 @@ function getDrive() {
     process.env.GOOGLE_REFRESH_TOKEN;
 
   if (!refreshToken) {
-
     throw new Error(
-      "GOOGLE_REFRESH_TOKEN is not configured yet."
+      "GOOGLE_REFRESH_TOKEN is not configured."
     );
   }
 
@@ -309,14 +229,48 @@ function safeName(name) {
 }
 
 // ======================================================
-// STORE ACTIVE UPLOAD SESSIONS
+// ACTIVE UPLOAD SESSIONS
+// ======================================================
+//
+// Each session contains:
+// - Google resumable URL
+// - MIME type
+// - current Google offset
+// - last activity
+//
 // ======================================================
 
-const uploadSessions =
-  new Map();
+const uploadSessions = new Map();
+
+// Remove abandoned sessions from memory.
+// This DOES NOT delete Google files.
+setInterval(() => {
+
+  const now = Date.now();
+
+  for (
+    const [id, session]
+    of uploadSessions.entries()
+  ) {
+
+    if (
+      now - session.lastActivity >
+      3 * 60 * 60 * 1000
+    ) {
+
+      console.log(
+        "Removing abandoned upload session:",
+        id
+      );
+
+      uploadSessions.delete(id);
+    }
+  }
+
+}, 10 * 60 * 1000);
 
 // ======================================================
-// CREATE GOOGLE DRIVE UPLOAD SESSION
+// CREATE DRIVE RESUMABLE SESSION
 // ======================================================
 
 app.post(
@@ -329,15 +283,13 @@ app.post(
         process.env.GOOGLE_DRIVE_FOLDER_ID;
 
       if (!folderId) {
-
         return res.status(500).json({
           error:
             "GOOGLE_DRIVE_FOLDER_ID is not configured."
         });
       }
 
-      const drive =
-        getDrive();
+      const drive = getDrive();
 
       const auth =
         drive.context._options.auth;
@@ -351,9 +303,8 @@ app.post(
           : tokenResponse.token;
 
       if (!token) {
-
         throw new Error(
-          "Could not obtain Google Drive access token."
+          "Could not obtain Google access token."
         );
       }
 
@@ -362,15 +313,10 @@ app.post(
         "video/webm";
 
       const metadata = {
-
         name: safeName(
           req.body.fileName
         ),
-
-        parents: [
-          folderId
-        ],
-
+        parents: [folderId],
         mimeType: mime
       };
 
@@ -381,7 +327,6 @@ app.post(
             method: "POST",
 
             headers: {
-
               Authorization:
                 `Bearer ${token}`,
 
@@ -393,9 +338,7 @@ app.post(
             },
 
             body:
-              JSON.stringify(
-                metadata
-              )
+              JSON.stringify(metadata)
           }
         );
 
@@ -410,12 +353,9 @@ app.post(
       }
 
       const uploadUrl =
-        response.headers.get(
-          "location"
-        );
+        response.headers.get("location");
 
       if (!uploadUrl) {
-
         throw new Error(
           "Google Drive did not return an upload URL."
         );
@@ -429,8 +369,8 @@ app.post(
         {
           uploadUrl,
           mime,
-          createdAt:
-            Date.now()
+          offset: 0,
+          lastActivity: Date.now()
         }
       );
 
@@ -440,13 +380,113 @@ app.post(
       );
 
       res.json({
-        sessionId
+        sessionId,
+        ok: true
       });
 
     } catch (error) {
 
       console.error(
         "Google Drive session error:",
+        error
+      );
+
+      res.status(500).json({
+        error: error.message
+      });
+    }
+  }
+);
+
+// ======================================================
+// DRIVE STATUS / RECOVERY
+// ======================================================
+//
+// The browser can ask Google:
+//
+// "How many bytes have you already received?"
+//
+// This is important if a network request fails.
+// ======================================================
+
+app.post(
+  "/api/drive/status",
+  async (req, res) => {
+
+    try {
+
+      const sessionId =
+        req.headers[
+          "x-upload-session"
+        ];
+
+      if (!sessionId) {
+        return res.status(400).json({
+          error:
+            "Upload session is missing."
+        });
+      }
+
+      const session =
+        uploadSessions.get(sessionId);
+
+      if (!session) {
+        return res.status(404).json({
+          error:
+            "Upload session not found."
+        });
+      }
+
+      session.lastActivity =
+        Date.now();
+
+      const response =
+        await fetch(
+          session.uploadUrl,
+          {
+            method: "PUT",
+
+            headers: {
+              "Content-Length": "0",
+              "Content-Range":
+                "bytes */*"
+            }
+          }
+        );
+
+      const range =
+        response.headers.get(
+          "Range"
+        );
+
+      let offset =
+        session.offset;
+
+      if (range) {
+
+        const match =
+          range.match(
+            /bytes=0-(\d+)/
+          );
+
+        if (match) {
+          offset =
+            Number(match[1]) + 1;
+        }
+      }
+
+      session.offset =
+        offset;
+
+      res.json({
+        ok: true,
+        offset
+      });
+
+    } catch (error) {
+
+      console.error(
+        "Drive status error:",
         error
       );
 
@@ -459,7 +499,7 @@ app.post(
 );
 
 // ======================================================
-// PROXY VIDEO CHUNK TO GOOGLE DRIVE
+// UPLOAD CHUNK
 // ======================================================
 
 app.post(
@@ -474,7 +514,6 @@ app.post(
         ];
 
       if (!sessionId) {
-
         return res.status(400).json({
           error:
             "Upload session is missing."
@@ -482,15 +521,12 @@ app.post(
       }
 
       const session =
-        uploadSessions.get(
-          sessionId
-        );
+        uploadSessions.get(sessionId);
 
       if (!session) {
-
         return res.status(404).json({
           error:
-            "Upload session not found or expired."
+            "Upload session expired. Create a new recording."
         });
       }
 
@@ -499,7 +535,6 @@ app.post(
         !Buffer.isBuffer(req.body) ||
         req.body.length === 0
       ) {
-
         return res.status(400).json({
           error:
             "No video data received."
@@ -512,42 +547,103 @@ app.post(
         ];
 
       if (!contentRange) {
-
         return res.status(400).json({
           error:
             "Content-Range header is missing."
         });
       }
 
+      session.lastActivity =
+        Date.now();
+
       console.log(
-        "Proxying chunk:",
+        "Uploading chunk:",
         contentRange,
         "size:",
         req.body.length
       );
 
-      const googleResponse =
-        await fetch(
-          session.uploadUrl,
-          {
-            method: "PUT",
+      // --------------------------------------------------
+      // IMPORTANT:
+      // Retry temporary Google errors here instead of
+      // immediately killing the recording.
+      // --------------------------------------------------
 
-            headers: {
+      let googleResponse;
+      let responseText = "";
 
-              "Content-Type":
-                session.mime,
+      for (
+        let attempt = 1;
+        attempt <= 5;
+        attempt++
+      ) {
 
-              "Content-Range":
-                contentRange
-            },
+        try {
 
-            body:
-              req.body
+          googleResponse =
+            await fetch(
+              session.uploadUrl,
+              {
+                method: "PUT",
+
+                headers: {
+                  "Content-Type":
+                    session.mime,
+
+                  "Content-Range":
+                    contentRange
+                },
+
+                body:
+                  req.body
+              }
+            );
+
+          responseText =
+            await googleResponse.text();
+
+          if (
+            googleResponse.status < 500
+          ) {
+            break;
           }
-        );
 
-      const responseText =
-        await googleResponse.text();
+          console.warn(
+            `Google temporary error ${googleResponse.status}. ` +
+            `Retry ${attempt}/5`
+          );
+
+        } catch (error) {
+
+          console.warn(
+            `Upload network error. Retry ${attempt}/5`,
+            error.message
+          );
+        }
+
+        await new Promise(
+          resolve =>
+            setTimeout(
+              resolve,
+              Math.min(
+                1000 * attempt,
+                5000
+              )
+            )
+        );
+      }
+
+      if (!googleResponse) {
+
+        return res.status(503).json({
+          error:
+            "Google Drive could not be reached after retries."
+        });
+      }
+
+      // --------------------------------------------------
+      // RETURN RANGE
+      // --------------------------------------------------
 
       const range =
         googleResponse.headers.get(
@@ -562,9 +658,9 @@ app.post(
         );
       }
 
-      // ==================================================
-      // UPLOAD COMPLETE
-      // ==================================================
+      // --------------------------------------------------
+      // FILE COMPLETE
+      // --------------------------------------------------
 
       if (
         googleResponse.status === 200 ||
@@ -572,7 +668,16 @@ app.post(
       ) {
 
         console.log(
-          "Google Drive file upload completed."
+          "======================================"
+        );
+
+        console.log(
+          "GOOGLE DRIVE FILE COMPLETED:",
+          sessionId
+        );
+
+        console.log(
+          "======================================"
         );
 
         uploadSessions.delete(
@@ -583,28 +688,55 @@ app.post(
           .status(
             googleResponse.status
           )
-          .send(responseText);
+          .send(
+            responseText
+          );
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // MORE DATA REQUIRED
-      // ==================================================
+      // --------------------------------------------------
 
       if (
         googleResponse.status === 308
       ) {
+
+        let confirmedOffset =
+          session.offset;
+
+        if (range) {
+
+          const match =
+            range.match(
+              /bytes=0-(\d+)/
+            );
+
+          if (match) {
+
+            confirmedOffset =
+              Number(match[1]) + 1;
+          }
+        }
+
+        session.offset =
+          confirmedOffset;
+
+        console.log(
+          "Google Drive confirmed offset:",
+          confirmedOffset
+        );
 
         return res
           .status(308)
           .send();
       }
 
-      // ==================================================
+      // --------------------------------------------------
       // GOOGLE ERROR
-      // ==================================================
+      // --------------------------------------------------
 
       console.error(
-        "Google Drive chunk error:",
+        "Google Drive upload error:",
         googleResponse.status,
         responseText
       );
@@ -613,7 +745,9 @@ app.post(
         .status(
           googleResponse.status
         )
-        .send(responseText);
+        .send(
+          responseText
+        );
 
     } catch (error) {
 
@@ -631,7 +765,7 @@ app.post(
 );
 
 // ======================================================
-// 30-DAY CLEANUP
+// 30 DAY CLEANUP
 // ======================================================
 
 app.post(
@@ -659,7 +793,6 @@ app.post(
         process.env.GOOGLE_DRIVE_FOLDER_ID;
 
       if (!folderId) {
-
         return res.status(500).json({
           error:
             "Folder ID not configured."
@@ -686,7 +819,6 @@ app.post(
 
         const result =
           await drive.files.list({
-
             q:
               `'${folderId}' in parents ` +
               `and trashed = false ` +
@@ -712,7 +844,6 @@ app.post(
           );
 
           await drive.files.update({
-
             fileId:
               file.id,
 
@@ -728,9 +859,7 @@ app.post(
         pageToken =
           result.data.nextPageToken;
 
-      } while (
-        pageToken
-      );
+      } while (pageToken);
 
       res.json({
         ok: true,
@@ -753,7 +882,7 @@ app.post(
 );
 
 // ======================================================
-// HEALTH CHECK
+// HEALTH
 // ======================================================
 
 app.get(
@@ -775,7 +904,11 @@ app.get(
         !!process.env.GOOGLE_REFRESH_TOKEN,
 
       googleDriveConfigured:
-        !!process.env.GOOGLE_FILE_CREDENTIAL,
+        !!(
+          process.env.GOOGLE_REFRESH_TOKEN &&
+          process.env.GOOGLE_CLIENT_ID &&
+          process.env.GOOGLE_CLIENT_SECRET
+        ),
 
       folderConfigured:
         !!process.env.GOOGLE_DRIVE_FOLDER_ID
@@ -784,7 +917,7 @@ app.get(
 );
 
 // ======================================================
-// SOCKET.IO LIVE STREAM
+// LIVE STREAMING
 // ======================================================
 
 io.on(
@@ -795,14 +928,12 @@ io.on(
       "join-room",
       roomId => {
 
-        socket.join(
-          roomId
-        );
+        socket.join(roomId);
 
         const room =
-          io.sockets.adapter
-            .rooms
-            .get(roomId);
+          io.sockets.adapter.rooms.get(
+            roomId
+          );
 
         const users =
           room
@@ -866,7 +997,7 @@ io.on(
 );
 
 // ======================================================
-// START SERVER
+// START
 // ======================================================
 
 server.listen(
@@ -878,25 +1009,22 @@ server.listen(
     );
 
     console.log(
-      `Google OAuth configured: ${
-        !!(
-          process.env.GOOGLE_CLIENT_ID &&
-          process.env.GOOGLE_CLIENT_SECRET &&
-          process.env.GOOGLE_REDIRECT_URI
-        )
-      }`
+      "Google OAuth configured:",
+      !!(
+        process.env.GOOGLE_CLIENT_ID &&
+        process.env.GOOGLE_CLIENT_SECRET &&
+        process.env.GOOGLE_REDIRECT_URI
+      )
     );
 
     console.log(
-      `Google refresh token configured: ${
-        !!process.env.GOOGLE_REFRESH_TOKEN
-      }`
+      "Google refresh token configured:",
+      !!process.env.GOOGLE_REFRESH_TOKEN
     );
 
     console.log(
-      `Google Drive folder configured: ${
-        !!process.env.GOOGLE_DRIVE_FOLDER_ID
-      }`
+      "Google Drive folder configured:",
+      !!process.env.GOOGLE_DRIVE_FOLDER_ID
     );
   }
 );
