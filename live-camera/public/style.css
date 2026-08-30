@@ -1,1 +1,149 @@
-*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;background:#111;color:white;display:flex;justify-content:center;align-items:center;min-height:100vh}.container{width:90%;max-width:700px;text-align:center}h1{font-size:36px}input{width:100%;padding:14px;margin:10px 0;border-radius:8px;border:1px solid #555;font-size:16px}button{display:block;width:100%;padding:15px;margin:15px 0;border:0;border-radius:10px;font-size:18px;cursor:pointer}button:disabled{opacity:.6}video{width:100%;margin-top:20px;background:#000;border-radius:10px;max-height:75vh}
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: white;
+
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    min-height: 100vh;
+}
+
+.container {
+    width: 90%;
+    max-width: 750px;
+    text-align: center;
+
+    padding: 25px 0;
+}
+
+h1 {
+    font-size: 36px;
+    margin-bottom: 10px;
+}
+
+h2 {
+    margin-top: 5px;
+}
+
+.subtitle {
+    color: #bbb;
+    margin-bottom: 25px;
+}
+
+input {
+    width: 100%;
+
+    padding: 15px;
+
+    margin: 10px 0;
+
+    border-radius: 8px;
+
+    border: 1px solid #555;
+
+    background: #222;
+    color: white;
+
+    font-size: 16px;
+}
+
+button {
+    display: block;
+
+    width: 100%;
+
+    padding: 15px;
+
+    margin: 15px 0;
+
+    border: 0;
+
+    border-radius: 10px;
+
+    background: #eee;
+    color: #111;
+
+    font-size: 18px;
+
+    cursor: pointer;
+}
+
+button:hover {
+    opacity: 0.9;
+}
+
+button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+a {
+    text-decoration: none;
+}
+
+video {
+    width: 100%;
+
+    margin-top: 20px;
+
+    background: #000;
+
+    border-radius: 10px;
+
+    max-height: 75vh;
+
+    object-fit: contain;
+}
+
+.status-box {
+    margin-top: 15px;
+
+    padding: 12px;
+
+    border-radius: 10px;
+
+    background: #1d1d1d;
+
+    border: 1px solid #333;
+}
+
+.status-box p {
+    margin: 6px;
+}
+
+.notice {
+    margin-top: 20px;
+
+    padding: 12px;
+
+    border-radius: 8px;
+
+    background: #191919;
+
+    color: #aaa;
+
+    font-size: 14px;
+}
+
+.card {
+    margin: 20px 0;
+
+    padding: 20px;
+
+    border-radius: 12px;
+
+    background: #1b1b1b;
+
+    border: 1px solid #333;
+}
+
+.card p {
+    color: #bbb;
+}
