@@ -1,4 +1,74 @@
 <!DOCTYPE html>
-<html><head><title>Watch Live</title><meta name="viewport" content="width=device-width,initial-scale=1.0"><link rel="stylesheet" href="style.css"></head>
-<body><div class="container"><h1>📺 Watch Live</h1><input id="roomId" placeholder="Enter Room ID"><button id="watchButton">Watch Live</button><video id="remoteVideo" autoplay playsinline controls></video><p id="status">Not connected</p></div>
-<script src="/socket.io/socket.io.js"></script><script src="viewer.js"></script></body></html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Watch Live</title>
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>📺 Watch Live</h1>
+
+        <p class="subtitle">
+            Live video + audio
+        </p>
+
+        <input
+            id="roomId"
+            type="text"
+            placeholder="Enter Room ID"
+            autocomplete="off"
+        >
+
+        <button id="watchButton">
+            Watch Live
+        </button>
+
+        <video
+            id="remoteVideo"
+            autoplay
+            playsinline
+            controls
+        ></video>
+
+        <div class="status-box">
+
+            <p id="status">
+                Not connected
+            </p>
+
+            <p id="viewerCount">
+                Viewers: 0
+            </p>
+
+        </div>
+
+        <p class="notice">
+            🔴 Live stream only — nothing is recorded or saved.
+        </p>
+
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script src="viewer.js"></script>
+
+</body>
+
+</html>
