@@ -1,4 +1,74 @@
 <!DOCTYPE html>
-<html><head><title>Camera</title><meta name="viewport" content="width=device-width,initial-scale=1.0"><link rel="stylesheet" href="style.css"></head>
-<body><div class="container"><h1>📹 Camera</h1><input id="roomId" placeholder="Enter Room ID"><button id="startButton">Start Camera</button><video id="localVideo" autoplay muted playsinline></video><p id="status">Not connected</p><p id="recordingStatus">Recording: OFF</p></div>
-<script src="/socket.io/socket.io.js"></script><script src="camera.js"></script></body></html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>Camera - Live Stream</title>
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
+</head>
+
+<body>
+
+    <div class="container">
+
+        <h1>📹 Camera</h1>
+
+        <p class="subtitle">
+            Live video + audio
+        </p>
+
+        <input
+            id="roomId"
+            type="text"
+            placeholder="Enter Room ID"
+            autocomplete="off"
+        >
+
+        <button id="startButton">
+            Start Camera
+        </button>
+
+        <video
+            id="localVideo"
+            autoplay
+            muted
+            playsinline
+        ></video>
+
+        <div class="status-box">
+
+            <p id="status">
+                Camera is OFF
+            </p>
+
+            <p id="viewerCount">
+                Viewers: 0
+            </p>
+
+        </div>
+
+        <p class="notice">
+            🔴 Live only — video and audio are not recorded or saved.
+        </p>
+
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+
+    <script src="camera.js"></script>
+
+</body>
+
+</html>
