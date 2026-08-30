@@ -2,8 +2,6 @@ const express = require("express");
 const http = require("http");
 const path = require("path");
 const { Server } = require("socket.io");
-const { google } = require("googleapis");
-const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
@@ -11,1020 +9,428 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// ======================================================
-// MIDDLEWARE
-// ======================================================
-
-app.use(express.json({ limit: "2mb" }));
-
-app.use(
-  "/api/drive/chunk",
-  express.raw({
-    type: "application/octet-stream",
-    limit: "20mb"
-  })
-);
-
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
-  res.sendFile(
-    path.join(__dirname, "public", "index.html")
-  );
+    res.sendFile(
+        path.join(__dirname, "public", "index.html")
+    );
 });
 
-// ======================================================
-// GOOGLE OAUTH
-// ======================================================
-
-function getOAuthClient() {
-  const clientId = process.env.GOOGLE_CLIENT_ID;
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
-
-  if (!clientId || !clientSecret || !redirectUri) {
-    throw new Error(
-      "Google OAuth credentials are not configured."
-    );
-  }
-
-  return new google.auth.OAuth2(
-    clientId,
-    clientSecret,
-    redirectUri
-  );
-}
 
 // ======================================================
-// GOOGLE AUTHORIZATION
+// ROOMS
+// ======================================================
+//
+// Each room has:
+// camera: socket ID of the camera
+// viewers: Set of viewer socket IDs
+//
+// The server NEVER receives the camera video.
+// It only passes WebRTC signaling messages.
 // ======================================================
 
-app.get("/auth/google", (req, res) => {
-  try {
-    const oauth2Client = getOAuthClient();
+const rooms = new Map();
 
-    const authUrl =
-      oauth2Client.generateAuthUrl({
-        access_type: "offline",
-        prompt: "consent",
-        scope: [
-          "https://www.googleapis.com/auth/drive"
-        ]
-      });
+function getRoom(roomId) {
 
-    res.redirect(authUrl);
+    if (!rooms.has(roomId)) {
 
-  } catch (error) {
-    console.error(
-      "Google OAuth start error:",
-      error
-    );
+        rooms.set(roomId, {
+            camera: null,
+            viewers: new Set()
+        });
 
-    res.status(500).send(
-      "Google OAuth configuration error: " +
-      error.message
-    );
-  }
-});
-
-// ======================================================
-// GOOGLE CALLBACK
-// ======================================================
-
-app.get(
-  "/auth/google/callback",
-  async (req, res) => {
-
-    try {
-
-      const code = req.query.code;
-
-      if (!code) {
-        return res.status(400).send(
-          "Authorization code is missing."
-        );
-      }
-
-      const oauth2Client =
-        getOAuthClient();
-
-      const { tokens } =
-        await oauth2Client.getToken(code);
-
-      console.log(
-        "Google OAuth authorization successful."
-      );
-
-      if (!tokens.refresh_token) {
-        return res.status(400).send(
-          "Google did not return a refresh token. " +
-          "Authorize again with consent."
-        );
-      }
-
-      res.send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Google Drive Authorization</title>
-        </head>
-
-        <body style="
-          font-family:Arial;
-          padding:30px;
-        ">
-
-          <h2>
-            Google Drive authorization successful ✅
-          </h2>
-
-          <p>
-            Put this value into Render as:
-          </p>
-
-          <h3>
-            GOOGLE_REFRESH_TOKEN
-          </h3>
-
-          <textarea
-            readonly
-            style="
-              width:100%;
-              max-width:900px;
-              height:150px;
-              font-family:monospace;
-            "
-          >${String(tokens.refresh_token)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;")}</textarea>
-
-          <p>
-            Keep this token private.
-          </p>
-
-        </body>
-        </html>
-      `);
-
-    } catch (error) {
-
-      console.error(
-        "Google OAuth callback error:",
-        error
-      );
-
-      res.status(500).send(
-        "Google OAuth callback failed: " +
-        error.message
-      );
     }
-  }
-);
+
+    return rooms.get(roomId);
+}
+
 
 // ======================================================
-// GOOGLE DRIVE CLIENT
+// SOCKET CONNECTION
 // ======================================================
 
-function getDrive() {
+io.on("connection", (socket) => {
 
-  const refreshToken =
-    process.env.GOOGLE_REFRESH_TOKEN;
-
-  if (!refreshToken) {
-    throw new Error(
-      "GOOGLE_REFRESH_TOKEN is not configured."
+    console.log(
+        "Client connected:",
+        socket.id
     );
-  }
 
-  const oauth2Client =
-    getOAuthClient();
 
-  oauth2Client.setCredentials({
-    refresh_token: refreshToken
-  });
+    // ==================================================
+    // JOIN ROOM
+    // ==================================================
 
-  return google.drive({
-    version: "v3",
-    auth: oauth2Client
-  });
-}
+    socket.on("join-room", (roomId) => {
+
+        roomId = String(roomId || "").trim();
+
+        if (!roomId) {
+            return;
+        }
+
+        // Leave previous room if necessary
+        if (socket.data.roomId) {
+
+            leaveRoom(socket);
+        }
+
+        socket.data.roomId = roomId;
+
+        const room = getRoom(roomId);
+
+
+        // ==================================================
+        // FIRST DEVICE = CAMERA
+        // ==================================================
+
+        if (!room.camera) {
+
+            room.camera = socket.id;
+
+            socket.data.role = "camera";
+
+            socket.join(roomId);
+
+            socket.emit("role", "camera");
+
+            socket.emit(
+                "camera-ready",
+                {
+                    viewers: room.viewers.size
+                }
+            );
+
+            console.log(
+                `Camera ${socket.id} started room ${roomId}`
+            );
+
+            return;
+        }
+
+
+        // ==================================================
+        // EVERY OTHER DEVICE = VIEWER
+        // ==================================================
+
+        socket.data.role = "viewer";
+
+        room.viewers.add(socket.id);
+
+        socket.join(roomId);
+
+        socket.emit("role", "viewer");
+
+        console.log(
+            `Viewer ${socket.id} joined room ${roomId}`
+        );
+
+
+        // Tell viewer which camera it should connect to
+        socket.emit(
+            "camera-available",
+            {
+                cameraId: room.camera
+            }
+        );
+
+
+        // Tell camera that a new viewer arrived
+        io.to(room.camera).emit(
+            "viewer-joined",
+            {
+                viewerId: socket.id
+            }
+        );
+
+
+        // Update viewer count
+        updateViewerCount(roomId);
+
+    });
+
+
+    // ==================================================
+    // CAMERA OFFER -> SPECIFIC VIEWER
+    // ==================================================
+
+    socket.on(
+        "offer",
+        ({ viewerId, offer }) => {
+
+            if (
+                socket.data.role !== "camera" ||
+                !viewerId ||
+                !offer
+            ) {
+                return;
+            }
+
+            io.to(viewerId).emit(
+                "offer",
+                {
+                    cameraId: socket.id,
+                    offer
+                }
+            );
+        }
+    );
+
+
+    // ==================================================
+    // VIEWER ANSWER -> CAMERA
+    // ==================================================
+
+    socket.on(
+        "answer",
+        ({ cameraId, answer }) => {
+
+            if (
+                socket.data.role !== "viewer" ||
+                !cameraId ||
+                !answer
+            ) {
+                return;
+            }
+
+            io.to(cameraId).emit(
+                "answer",
+                {
+                    viewerId: socket.id,
+                    answer
+                }
+            );
+        }
+    );
+
+
+    // ==================================================
+    // ICE CANDIDATE
+    // ==================================================
+
+    socket.on(
+        "ice-candidate",
+        ({ targetId, candidate }) => {
+
+            if (
+                !targetId ||
+                !candidate
+            ) {
+                return;
+            }
+
+            io.to(targetId).emit(
+                "ice-candidate",
+                {
+                    senderId: socket.id,
+                    candidate
+                }
+            );
+        }
+    );
+
+
+    // ==================================================
+    // DISCONNECT
+    // ==================================================
+
+    socket.on("disconnect", () => {
+
+        console.log(
+            "Client disconnected:",
+            socket.id
+        );
+
+        leaveRoom(socket);
+
+    });
+
+});
+
 
 // ======================================================
-// SAFE FILE NAME
+// LEAVE ROOM
 // ======================================================
 
-function safeName(name) {
+function leaveRoom(socket) {
 
-  return String(
-    name || "recording.webm"
-  )
-    .replace(
-      /[^a-zA-Z0-9._ -]/g,
-      "_"
-    )
-    .slice(0, 180);
-}
+    const roomId =
+        socket.data.roomId;
 
-// ======================================================
-// ACTIVE UPLOAD SESSIONS
-// ======================================================
-//
-// Each session contains:
-// - Google resumable URL
-// - MIME type
-// - current Google offset
-// - last activity
-//
-// ======================================================
+    if (!roomId) {
+        return;
+    }
 
-const uploadSessions = new Map();
+    const room =
+        rooms.get(roomId);
 
-// Remove abandoned sessions from memory.
-// This DOES NOT delete Google files.
-setInterval(() => {
+    if (!room) {
+        return;
+    }
 
-  const now = Date.now();
 
-  for (
-    const [id, session]
-    of uploadSessions.entries()
-  ) {
+    // ==================================================
+    // CAMERA LEFT
+    // ==================================================
 
     if (
-      now - session.lastActivity >
-      3 * 60 * 60 * 1000
+        socket.data.role === "camera" &&
+        room.camera === socket.id
     ) {
 
-      console.log(
-        "Removing abandoned upload session:",
-        id
-      );
+        room.camera = null;
 
-      uploadSessions.delete(id);
-    }
-  }
-
-}, 10 * 60 * 1000);
-
-// ======================================================
-// CREATE DRIVE RESUMABLE SESSION
-// ======================================================
-
-app.post(
-  "/api/drive/session",
-  async (req, res) => {
-
-    try {
-
-      const folderId =
-        process.env.GOOGLE_DRIVE_FOLDER_ID;
-
-      if (!folderId) {
-        return res.status(500).json({
-          error:
-            "GOOGLE_DRIVE_FOLDER_ID is not configured."
-        });
-      }
-
-      const drive = getDrive();
-
-      const auth =
-        drive.context._options.auth;
-
-      const tokenResponse =
-        await auth.getAccessToken();
-
-      const token =
-        typeof tokenResponse === "string"
-          ? tokenResponse
-          : tokenResponse.token;
-
-      if (!token) {
-        throw new Error(
-          "Could not obtain Google access token."
-        );
-      }
-
-      const mime =
-        req.body.mimeType ||
-        "video/webm";
-
-      const metadata = {
-        name: safeName(
-          req.body.fileName
-        ),
-        parents: [folderId],
-        mimeType: mime
-      };
-
-      const response =
-        await fetch(
-          "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-          {
-            method: "POST",
-
-            headers: {
-              Authorization:
-                `Bearer ${token}`,
-
-              "Content-Type":
-                "application/json; charset=UTF-8",
-
-              "X-Upload-Content-Type":
-                mime
-            },
-
-            body:
-              JSON.stringify(metadata)
-          }
-        );
-
-      if (!response.ok) {
-
-        const text =
-          await response.text();
-
-        throw new Error(
-          `Drive session failed: ${response.status} ${text}`
-        );
-      }
-
-      const uploadUrl =
-        response.headers.get("location");
-
-      if (!uploadUrl) {
-        throw new Error(
-          "Google Drive did not return an upload URL."
-        );
-      }
-
-      const sessionId =
-        crypto.randomUUID();
-
-      uploadSessions.set(
-        sessionId,
-        {
-          uploadUrl,
-          mime,
-          offset: 0,
-          lastActivity: Date.now()
-        }
-      );
-
-      console.log(
-        "Google Drive upload session created:",
-        sessionId
-      );
-
-      res.json({
-        sessionId,
-        ok: true
-      });
-
-    } catch (error) {
-
-      console.error(
-        "Google Drive session error:",
-        error
-      );
-
-      res.status(500).json({
-        error: error.message
-      });
-    }
-  }
-);
-
-// ======================================================
-// DRIVE STATUS / RECOVERY
-// ======================================================
-//
-// The browser can ask Google:
-//
-// "How many bytes have you already received?"
-//
-// This is important if a network request fails.
-// ======================================================
-
-app.post(
-  "/api/drive/status",
-  async (req, res) => {
-
-    try {
-
-      const sessionId =
-        req.headers[
-          "x-upload-session"
-        ];
-
-      if (!sessionId) {
-        return res.status(400).json({
-          error:
-            "Upload session is missing."
-        });
-      }
-
-      const session =
-        uploadSessions.get(sessionId);
-
-      if (!session) {
-        return res.status(404).json({
-          error:
-            "Upload session not found."
-        });
-      }
-
-      session.lastActivity =
-        Date.now();
-
-      const response =
-        await fetch(
-          session.uploadUrl,
-          {
-            method: "PUT",
-
-            headers: {
-              "Content-Length": "0",
-              "Content-Range":
-                "bytes */*"
-            }
-          }
-        );
-
-      const range =
-        response.headers.get(
-          "Range"
-        );
-
-      let offset =
-        session.offset;
-
-      if (range) {
-
-        const match =
-          range.match(
-            /bytes=0-(\d+)/
-          );
-
-        if (match) {
-          offset =
-            Number(match[1]) + 1;
-        }
-      }
-
-      session.offset =
-        offset;
-
-      res.json({
-        ok: true,
-        offset
-      });
-
-    } catch (error) {
-
-      console.error(
-        "Drive status error:",
-        error
-      );
-
-      res.status(500).json({
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ======================================================
-// UPLOAD CHUNK
-// ======================================================
-
-app.post(
-  "/api/drive/chunk",
-  async (req, res) => {
-
-    try {
-
-      const sessionId =
-        req.headers[
-          "x-upload-session"
-        ];
-
-      if (!sessionId) {
-        return res.status(400).json({
-          error:
-            "Upload session is missing."
-        });
-      }
-
-      const session =
-        uploadSessions.get(sessionId);
-
-      if (!session) {
-        return res.status(404).json({
-          error:
-            "Upload session expired. Create a new recording."
-        });
-      }
-
-      if (
-        !req.body ||
-        !Buffer.isBuffer(req.body) ||
-        req.body.length === 0
-      ) {
-        return res.status(400).json({
-          error:
-            "No video data received."
-        });
-      }
-
-      const contentRange =
-        req.headers[
-          "content-range"
-        ];
-
-      if (!contentRange) {
-        return res.status(400).json({
-          error:
-            "Content-Range header is missing."
-        });
-      }
-
-      session.lastActivity =
-        Date.now();
-
-      console.log(
-        "Uploading chunk:",
-        contentRange,
-        "size:",
-        req.body.length
-      );
-
-      // --------------------------------------------------
-      // IMPORTANT:
-      // Retry temporary Google errors here instead of
-      // immediately killing the recording.
-      // --------------------------------------------------
-
-      let googleResponse;
-      let responseText = "";
-
-      for (
-        let attempt = 1;
-        attempt <= 5;
-        attempt++
-      ) {
-
-        try {
-
-          googleResponse =
-            await fetch(
-              session.uploadUrl,
-              {
-                method: "PUT",
-
-                headers: {
-                  "Content-Type":
-                    session.mime,
-
-                  "Content-Range":
-                    contentRange
-                },
-
-                body:
-                  req.body
-              }
-            );
-
-          responseText =
-            await googleResponse.text();
-
-          if (
-            googleResponse.status < 500
-          ) {
-            break;
-          }
-
-          console.warn(
-            `Google temporary error ${googleResponse.status}. ` +
-            `Retry ${attempt}/5`
-          );
-
-        } catch (error) {
-
-          console.warn(
-            `Upload network error. Retry ${attempt}/5`,
-            error.message
-          );
-        }
-
-        await new Promise(
-          resolve =>
-            setTimeout(
-              resolve,
-              Math.min(
-                1000 * attempt,
-                5000
-              )
-            )
-        );
-      }
-
-      if (!googleResponse) {
-
-        return res.status(503).json({
-          error:
-            "Google Drive could not be reached after retries."
-        });
-      }
-
-      // --------------------------------------------------
-      // RETURN RANGE
-      // --------------------------------------------------
-
-      const range =
-        googleResponse.headers.get(
-          "Range"
-        );
-
-      if (range) {
-
-        res.setHeader(
-          "Range",
-          range
-        );
-      }
-
-      // --------------------------------------------------
-      // FILE COMPLETE
-      // --------------------------------------------------
-
-      if (
-        googleResponse.status === 200 ||
-        googleResponse.status === 201
-      ) {
-
-        console.log(
-          "======================================"
-        );
-
-        console.log(
-          "GOOGLE DRIVE FILE COMPLETED:",
-          sessionId
-        );
-
-        console.log(
-          "======================================"
-        );
-
-        uploadSessions.delete(
-          sessionId
-        );
-
-        return res
-          .status(
-            googleResponse.status
-          )
-          .send(
-            responseText
-          );
-      }
-
-      // --------------------------------------------------
-      // MORE DATA REQUIRED
-      // --------------------------------------------------
-
-      if (
-        googleResponse.status === 308
-      ) {
-
-        let confirmedOffset =
-          session.offset;
-
-        if (range) {
-
-          const match =
-            range.match(
-              /bytes=0-(\d+)/
-            );
-
-          if (match) {
-
-            confirmedOffset =
-              Number(match[1]) + 1;
-          }
-        }
-
-        session.offset =
-          confirmedOffset;
-
-        console.log(
-          "Google Drive confirmed offset:",
-          confirmedOffset
-        );
-
-        return res
-          .status(308)
-          .send();
-      }
-
-      // --------------------------------------------------
-      // GOOGLE ERROR
-      // --------------------------------------------------
-
-      console.error(
-        "Google Drive upload error:",
-        googleResponse.status,
-        responseText
-      );
-
-      return res
-        .status(
-          googleResponse.status
-        )
-        .send(
-          responseText
-        );
-
-    } catch (error) {
-
-      console.error(
-        "Chunk proxy error:",
-        error
-      );
-
-      res.status(500).json({
-        error:
-          error.message
-      });
-    }
-  }
-);
-
-// ======================================================
-// 30 DAY CLEANUP
-// ======================================================
-
-app.post(
-  "/api/cleanup",
-  async (req, res) => {
-
-    try {
-
-      const cleanupToken =
-        process.env.CLEANUP_TOKEN;
-
-      if (
-        !cleanupToken ||
-        req.headers.authorization !==
-          `Bearer ${cleanupToken}`
-      ) {
-
-        return res.status(401).json({
-          error:
-            "Unauthorized"
-        });
-      }
-
-      const folderId =
-        process.env.GOOGLE_DRIVE_FOLDER_ID;
-
-      if (!folderId) {
-        return res.status(500).json({
-          error:
-            "Folder ID not configured."
-        });
-      }
-
-      const drive =
-        getDrive();
-
-      const cutoff =
-        new Date(
-          Date.now() -
-          30 *
-          24 *
-          60 *
-          60 *
-          1000
-        ).toISOString();
-
-      let deleted = 0;
-      let pageToken;
-
-      do {
-
-        const result =
-          await drive.files.list({
-            q:
-              `'${folderId}' in parents ` +
-              `and trashed = false ` +
-              `and createdTime < '${cutoff}'`,
-
-            fields:
-              "nextPageToken, files(id,name,createdTime)",
-
-            pageSize:
-              1000,
-
-            pageToken
-          });
-
+        // Tell all viewers that camera is gone
         for (
-          const file of
-          result.data.files || []
+            const viewerId of room.viewers
         ) {
 
-          console.log(
-            "Deleting old recording:",
-            file.name
-          );
-
-          await drive.files.update({
-            fileId:
-              file.id,
-
-            requestBody: {
-              trashed:
-                true
-            }
-          });
-
-          deleted++;
+            io.to(viewerId).emit(
+                "camera-left"
+            );
         }
 
-        pageToken =
-          result.data.nextPageToken;
-
-      } while (pageToken);
-
-      res.json({
-        ok: true,
-        deleted
-      });
-
-    } catch (error) {
-
-      console.error(
-        "Cleanup error:",
-        error
-      );
-
-      res.status(500).json({
-        error:
-          error.message
-      });
+        console.log(
+            `Camera left room ${roomId}`
+        );
     }
-  }
-);
+
+
+    // ==================================================
+    // VIEWER LEFT
+    // ==================================================
+
+    if (
+        socket.data.role === "viewer"
+    ) {
+
+        room.viewers.delete(
+            socket.id
+        );
+
+
+        // Tell camera this viewer is gone
+        if (room.camera) {
+
+            io.to(room.camera).emit(
+                "viewer-left",
+                {
+                    viewerId: socket.id
+                }
+            );
+        }
+
+        console.log(
+            `Viewer left room ${roomId}`
+        );
+    }
+
+
+    socket.leave(roomId);
+
+    socket.data.roomId = null;
+    socket.data.role = null;
+
+
+    updateViewerCount(roomId);
+
+
+    // Remove empty room
+    if (
+        !room.camera &&
+        room.viewers.size === 0
+    ) {
+
+        rooms.delete(roomId);
+
+        console.log(
+            `Room deleted: ${roomId}`
+        );
+    }
+
+}
+
+
+// ======================================================
+// VIEWER COUNT
+// ======================================================
+
+function updateViewerCount(roomId) {
+
+    const room =
+        rooms.get(roomId);
+
+    if (!room) {
+        return;
+    }
+
+    const count =
+        room.viewers.size;
+
+
+    if (room.camera) {
+
+        io.to(room.camera).emit(
+            "viewer-count",
+            count
+        );
+    }
+
+
+    for (
+        const viewerId of room.viewers
+    ) {
+
+        io.to(viewerId).emit(
+            "viewer-count",
+            count
+        );
+    }
+
+}
+
 
 // ======================================================
 // HEALTH
 // ======================================================
 
-app.get(
-  "/health",
-  (req, res) => {
+app.get("/health", (req, res) => {
 
     res.json({
-
-      ok: true,
-
-      googleOAuthConfigured:
-        !!(
-          process.env.GOOGLE_CLIENT_ID &&
-          process.env.GOOGLE_CLIENT_SECRET &&
-          process.env.GOOGLE_REDIRECT_URI
-        ),
-
-      googleRefreshTokenConfigured:
-        !!process.env.GOOGLE_REFRESH_TOKEN,
-
-      googleDriveConfigured:
-        !!(
-          process.env.GOOGLE_REFRESH_TOKEN &&
-          process.env.GOOGLE_CLIENT_ID &&
-          process.env.GOOGLE_CLIENT_SECRET
-        ),
-
-      folderConfigured:
-        !!process.env.GOOGLE_DRIVE_FOLDER_ID
+        ok: true,
+        streaming: true,
+        recording: false,
+        storage: false
     });
-  }
-);
 
-// ======================================================
-// LIVE STREAMING
-// ======================================================
+});
 
-io.on(
-  "connection",
-  socket => {
-
-    socket.on(
-      "join-room",
-      roomId => {
-
-        socket.join(roomId);
-
-        const room =
-          io.sockets.adapter.rooms.get(
-            roomId
-          );
-
-        const users =
-          room
-            ? room.size
-            : 0;
-
-        socket.emit(
-          "role",
-          users === 1
-            ? "camera"
-            : "viewer"
-        );
-
-        socket
-          .to(roomId)
-          .emit(
-            "user-joined"
-          );
-      }
-    );
-
-    socket.on(
-      "offer",
-      ({ roomId, offer }) => {
-
-        socket
-          .to(roomId)
-          .emit(
-            "offer",
-            offer
-          );
-      }
-    );
-
-    socket.on(
-      "answer",
-      ({ roomId, answer }) => {
-
-        socket
-          .to(roomId)
-          .emit(
-            "answer",
-            answer
-          );
-      }
-    );
-
-    socket.on(
-      "ice-candidate",
-      ({ roomId, candidate }) => {
-
-        socket
-          .to(roomId)
-          .emit(
-            "ice-candidate",
-            candidate
-          );
-      }
-    );
-  }
-);
 
 // ======================================================
 // START
 // ======================================================
 
 server.listen(
-  PORT,
-  () => {
+    PORT,
+    () => {
 
-    console.log(
-      `Server running on port ${PORT}`
-    );
+        console.log(
+            `Live camera server running on port ${PORT}`
+        );
 
-    console.log(
-      "Google OAuth configured:",
-      !!(
-        process.env.GOOGLE_CLIENT_ID &&
-        process.env.GOOGLE_CLIENT_SECRET &&
-        process.env.GOOGLE_REDIRECT_URI
-      )
-    );
+        console.log(
+            "Video recording: DISABLED"
+        );
 
-    console.log(
-      "Google refresh token configured:",
-      !!process.env.GOOGLE_REFRESH_TOKEN
-    );
+        console.log(
+            "Google Drive: DISABLED"
+        );
 
-    console.log(
-      "Google Drive folder configured:",
-      !!process.env.GOOGLE_DRIVE_FOLDER_ID
-    );
-  }
+        console.log(
+            "Video storage: DISABLED"
+        );
+
+    }
 );
