@@ -9,6 +9,18 @@ let cameraStarted = false;
 
 
 // ======================================================
+// RECORDING
+// ======================================================
+
+let mediaRecorder = null;
+let recordingChunks = [];
+let recordingTimer = null;
+
+const RECORDING_LENGTH =
+    2 * 60 * 1000; // 2 minutes
+
+
+// ======================================================
 // HTML
 // ======================================================
 
@@ -131,6 +143,13 @@ async function startCamera() {
             "Camera Running";
 
 
+        // ==================================================
+        // START RECORDING
+        // ==================================================
+
+        startRecording();
+
+
     } catch (error) {
 
         console.error(
@@ -154,7 +173,393 @@ async function startCamera() {
 
         roomInput.disabled =
             false;
+
     }
+
+}
+
+
+// ======================================================
+// RECORDING MIME TYPE
+// ======================================================
+
+function getRecordingMimeType() {
+
+    const types = [
+
+        "video/webm;codecs=vp9,opus",
+
+        "video/webm;codecs=vp8,opus",
+
+        "video/webm"
+
+    ];
+
+
+    for (
+        const type
+        of types
+    ) {
+
+        if (
+            MediaRecorder.isTypeSupported(
+                type
+            )
+        ) {
+
+            return type;
+
+        }
+
+    }
+
+
+    return "";
+
+}
+
+
+// ======================================================
+// START RECORDING
+// ======================================================
+
+function startRecording() {
+
+    if (!localStream) {
+        return;
+    }
+
+
+    if (
+        !window.MediaRecorder
+    ) {
+
+        console.error(
+            "MediaRecorder is not supported."
+        );
+
+        return;
+
+    }
+
+
+    const mimeType =
+        getRecordingMimeType();
+
+
+    try {
+
+        recordingChunks = [];
+
+
+        const options =
+            mimeType
+                ? {
+                    mimeType
+                }
+                : undefined;
+
+
+        mediaRecorder =
+            new MediaRecorder(
+                localStream,
+                options
+            );
+
+
+        mediaRecorder.ondataavailable =
+            (event) => {
+
+                if (
+                    event.data &&
+                    event.data.size > 0
+                ) {
+
+                    recordingChunks.push(
+                        event.data
+                    );
+
+                }
+
+            };
+
+
+        mediaRecorder.onstop =
+            async () => {
+
+                const chunks =
+                    recordingChunks;
+
+
+                recordingChunks = [];
+
+
+                if (
+                    chunks.length === 0
+                ) {
+
+                    startNextRecording();
+
+                    return;
+
+                }
+
+
+                const blob =
+                    new Blob(
+                        chunks,
+                        {
+                            type:
+                                mediaRecorder.mimeType ||
+                                "video/webm"
+                        }
+                    );
+
+
+                console.log(
+                    "Recording finished:",
+                    blob.size,
+                    "bytes"
+                );
+
+
+                await uploadRecording(
+                    blob
+                );
+
+
+                startNextRecording();
+
+            };
+
+
+        mediaRecorder.onerror =
+            (event) => {
+
+                console.error(
+                    "Recording error:",
+                    event.error
+                );
+
+            };
+
+
+        mediaRecorder.start();
+
+
+        console.log(
+            "Recording started"
+        );
+
+
+        recordingTimer =
+            setTimeout(
+                () => {
+
+                    if (
+                        mediaRecorder &&
+                        mediaRecorder.state ===
+                            "recording"
+                    ) {
+
+                        mediaRecorder.stop();
+
+                    }
+
+                },
+                RECORDING_LENGTH
+            );
+
+
+    } catch (error) {
+
+        console.error(
+            "Could not start recording:",
+            error
+        );
+
+    }
+
+}
+
+
+// ======================================================
+// START NEXT RECORDING
+// ======================================================
+
+function startNextRecording() {
+
+    if (
+        !cameraStarted ||
+        !localStream
+    ) {
+
+        return;
+
+    }
+
+
+    setTimeout(
+        () => {
+
+            if (
+                cameraStarted &&
+                localStream
+            ) {
+
+                startRecording();
+
+            }
+
+        },
+        1000
+    );
+
+}
+
+
+// ======================================================
+// UPLOAD RECORDING
+// ======================================================
+
+async function uploadRecording(
+    blob
+) {
+
+    try {
+
+        console.log(
+            "Uploading recording to Google Drive..."
+        );
+
+
+        const formData =
+            new FormData();
+
+
+        const filename =
+            createRecordingFilename();
+
+
+        formData.append(
+            "recording",
+            blob,
+            filename
+        );
+
+
+        const response =
+            await fetch(
+                "/upload-recording",
+                {
+
+                    method:
+                        "POST",
+
+                    body:
+                        formData
+
+                }
+            );
+
+
+        const result =
+            await response.json();
+
+
+        if (
+            !response.ok ||
+            !result.success
+        ) {
+
+            throw new Error(
+                result.error ||
+                "Upload failed."
+            );
+
+        }
+
+
+        console.log(
+            "Recording uploaded to Google Drive:",
+            result.fileName
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Recording upload failed:",
+            error
+        );
+
+    }
+
+}
+
+
+// ======================================================
+// RECORDING FILE NAME
+// ======================================================
+
+function createRecordingFilename() {
+
+    const now =
+        new Date();
+
+
+    const year =
+        now.getFullYear();
+
+
+    const month =
+        String(
+            now.getMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const day =
+        String(
+            now.getDate()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const hours =
+        String(
+            now.getHours()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const minutes =
+        String(
+            now.getMinutes()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const seconds =
+        String(
+            now.getSeconds()
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    return (
+        `CCTV_${roomId}_${year}-${month}-${day}_${hours}-${minutes}-${seconds}.webm`
+    );
 
 }
 
@@ -167,7 +572,9 @@ socket.on(
     "role",
     (role) => {
 
-        if (role === "camera") {
+        if (
+            role === "camera"
+        ) {
 
             statusText.textContent =
                 "🟢 Camera LIVE — waiting for viewers";
@@ -224,8 +631,9 @@ async function createConnectionForViewer(
     viewerId
 ) {
 
-    // Close old connection if one exists
-    closeViewerConnection(viewerId);
+    closeViewerConnection(
+        viewerId
+    );
 
 
     const peerConnection =
@@ -272,11 +680,13 @@ async function createConnectionForViewer(
                 socket.emit(
                     "ice-candidate",
                     {
+
                         targetId:
                             viewerId,
 
                         candidate:
                             event.candidate
+
                     }
                 );
 
@@ -308,23 +718,6 @@ async function createConnectionForViewer(
 
             }
 
-
-            if (
-                peerConnection.connectionState ===
-                    "failed" ||
-                peerConnection.connectionState ===
-                    "closed" ||
-                peerConnection.connectionState ===
-                    "disconnected"
-            ) {
-
-                console.log(
-                    "Viewer connection ended:",
-                    viewerId
-                );
-
-            }
-
         };
 
 
@@ -344,8 +737,11 @@ async function createConnectionForViewer(
     socket.emit(
         "offer",
         {
+
             viewerId,
+
             offer
+
         }
     );
 
@@ -514,7 +910,7 @@ socket.on(
 
 
 // ======================================================
-// CAMERA LEFT / DISCONNECTED
+// SOCKET DISCONNECT
 // ======================================================
 
 socket.on(
@@ -535,6 +931,32 @@ socket.on(
 window.addEventListener(
     "beforeunload",
     () => {
+
+        cameraStarted =
+            false;
+
+
+        if (
+            recordingTimer
+        ) {
+
+            clearTimeout(
+                recordingTimer
+            );
+
+        }
+
+
+        if (
+            mediaRecorder &&
+            mediaRecorder.state ===
+                "recording"
+        ) {
+
+            mediaRecorder.stop();
+
+        }
+
 
         for (
             const connection
