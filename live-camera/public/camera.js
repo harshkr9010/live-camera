@@ -17,7 +17,7 @@ let recordingChunks = [];
 let recordingTimer = null;
 
 const RECORDING_LENGTH =
-    2 * 60 * 1000; // 2 minutes
+    30 * 60 * 1000; // 2 minutes
 
 
 // ======================================================
