@@ -1,4 +1,3 @@
-```json
 {
   "name": "live-camera",
   "version": "3.0.0",
@@ -14,4 +13,3 @@
     "multer": "^2.0.2"
   }
 }
-```
