@@ -1,7 +1,7 @@
 const express = require("express");
 const http = require("http");
-const path = require("path");
 const { Server } = require("socket.io");
+
 const { google } = require("googleapis");
 const multer = require("multer");
 const { Readable } = require("stream");
@@ -9,8 +9,6 @@ const { Readable } = require("stream");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
-const PORT = process.env.PORT || 3000;
 
 
 // ======================================================
@@ -23,7 +21,7 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_REDIRECT_URI
 );
 
-const DRIVE_SCOPES = [
+const GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ];
 
@@ -36,13 +34,9 @@ app.get("/authorize", (req, res) => {
 
     const authUrl =
         oauth2Client.generateAuthUrl({
-
             access_type: "offline",
-
-            scope: DRIVE_SCOPES,
-
-            prompt: "consent"
-
+            prompt: "consent",
+            scope: GOOGLE_SCOPES
         });
 
     res.redirect(authUrl);
@@ -54,49 +48,33 @@ app.get("/oauth2callback", async (req, res) => {
 
     try {
 
-        const code =
-            req.query.code;
-
-        if (!code) {
-
-            return res
-                .status(400)
-                .send(
-                    "Authorization code missing."
-                );
-
-        }
-
+        const { code } = req.query;
 
         const { tokens } =
             await oauth2Client.getToken(code);
 
-
         console.log(
-            "GOOGLE_REFRESH_TOKEN:",
-            tokens.refresh_token
+            "Google OAuth completed."
         );
 
+        console.log(
+            "Refresh token received. Add it to Render as GOOGLE_REFRESH_TOKEN."
+        );
 
         res.send(
             "Google Drive authorization successful. You can close this page."
         );
 
-
     } catch (error) {
 
         console.error(
             "Google OAuth error:",
-            error.response?.data ||
-            error.message
+            error
         );
 
-
-        res
-            .status(500)
-            .send(
-                "Google authorization failed."
-            );
+        res.status(500).send(
+            "Google authorization failed."
+        );
 
     }
 
@@ -109,34 +87,16 @@ app.get("/oauth2callback", async (req, res) => {
 
 function getDriveClient() {
 
-    const refreshToken =
-        process.env.GOOGLE_REFRESH_TOKEN;
-
-
-    if (!refreshToken) {
-
-        throw new Error(
-            "GOOGLE_REFRESH_TOKEN is not configured."
-        );
-
-    }
-
-
     oauth2Client.setCredentials({
 
         refresh_token:
-            refreshToken
+            process.env.GOOGLE_REFRESH_TOKEN
 
     });
 
-
     return google.drive({
-
         version: "v3",
-
-        auth:
-            oauth2Client
-
+        auth: oauth2Client
     });
 
 }
@@ -144,10 +104,6 @@ function getDriveClient() {
 
 // ======================================================
 // MULTER
-// ======================================================
-//
-// Recordings are temporarily kept in memory.
-// They are uploaded directly to Google Drive.
 // ======================================================
 
 const upload =
@@ -179,36 +135,30 @@ app.post(
 
             if (!req.file) {
 
-                return res
-                    .status(400)
-                    .json({
+                return res.status(400).json({
 
-                        success: false,
+                    success: false,
 
-                        error:
-                            "No recording received."
+                    error:
+                        "No recording received."
 
-                    });
+                });
 
             }
 
 
-            const folderId =
-                process.env.GOOGLE_DRIVE_FOLDER_ID;
+            if (
+                !process.env.GOOGLE_DRIVE_FOLDER_ID
+            ) {
 
+                return res.status(500).json({
 
-            if (!folderId) {
+                    success: false,
 
-                return res
-                    .status(500)
-                    .json({
+                    error:
+                        "Google Drive folder ID is not configured."
 
-                        success: false,
-
-                        error:
-                            "GOOGLE_DRIVE_FOLDER_ID is not configured."
-
-                    });
+                });
 
             }
 
@@ -217,19 +167,17 @@ app.post(
                 getDriveClient();
 
 
-            const originalName =
-                req.file.originalname ||
-                `cctv-recording-${Date.now()}.webm`;
-
-
             const fileMetadata = {
 
                 name:
-                    originalName,
+                    req.file.originalname,
 
                 parents: [
-                    folderId
-                ]
+                    process.env.GOOGLE_DRIVE_FOLDER_ID
+                ],
+
+                mimeType:
+                    "video/webm"
 
             };
 
@@ -237,7 +185,6 @@ app.post(
             const media = {
 
                 mimeType:
-                    req.file.mimetype ||
                     "video/webm",
 
                 body:
@@ -248,7 +195,13 @@ app.post(
             };
 
 
-            const result =
+            console.log(
+                "Uploading recording:",
+                req.file.originalname
+            );
+
+
+            const file =
                 await drive.files.create({
 
                     requestBody:
@@ -265,24 +218,22 @@ app.post(
 
             console.log(
                 "Recording uploaded:",
-                result.data
+                file.data.name
             );
 
 
             res.json({
 
-                success:
-                    true,
+                success: true,
 
                 fileId:
-                    result.data.id,
+                    file.data.id,
 
                 fileName:
-                    result.data.name,
+                    file.data.name,
 
                 link:
-                    result.data.webViewLink ||
-                    null
+                    file.data.webViewLink || null
 
             });
 
@@ -291,21 +242,18 @@ app.post(
 
             console.error(
                 "Google Drive upload error:",
-                error.response?.data ||
-                error.message
+                error
             );
 
 
-            res
-                .status(500)
-                .json({
+            res.status(500).json({
 
-                    success: false,
+                success: false,
 
-                    error:
-                        "Recording upload failed."
+                error:
+                    "Google Drive upload failed."
 
-                });
+            });
 
         }
 
@@ -314,74 +262,49 @@ app.post(
 
 
 // ======================================================
-// STATIC WEBSITE
+// WEBSITE
 // ======================================================
 
 app.use(
-    express.static(
-        path.join(
-            __dirname,
-            "public"
-        )
-    )
+    express.static("public")
 );
 
 
-app.get("/", (req, res) => {
+app.get(
+    "/",
+    (req, res) => {
 
-    res.sendFile(
-        path.join(
-            __dirname,
-            "public",
-            "index.html"
-        )
-    );
+        res.sendFile(
+            __dirname +
+            "/public/index.html"
+        );
 
-});
+    }
+);
 
 
 // ======================================================
-// ROOMS
-// ======================================================
-//
-// Each room has:
-// camera: socket ID of the camera
-// viewers: Set of viewer socket IDs
-//
-// The server NEVER receives the live camera video.
-// WebRTC sends video directly between devices.
-// Recording is uploaded separately to Google Drive.
+// CCTV ROOMS
 // ======================================================
 
 const rooms =
     new Map();
 
 
-function getRoom(roomId) {
+/*
 
-    if (!rooms.has(roomId)) {
+Room structure:
 
-        rooms.set(
-            roomId,
-            {
-
-                camera: null,
-
-                viewers:
-                    new Set()
-
-            }
-        );
-
-    }
-
-    return rooms.get(roomId);
-
+{
+    camera: socketId,
+    viewers: Set()
 }
+
+*/
 
 
 // ======================================================
-// SOCKET CONNECTION
+// JOIN ROOM
 // ======================================================
 
 io.on(
@@ -389,58 +312,49 @@ io.on(
     (socket) => {
 
         console.log(
-            "Client connected:",
+            "Socket connected:",
             socket.id
         );
 
-
-        // ==================================================
-        // JOIN ROOM
-        // ==================================================
 
         socket.on(
             "join-room",
             (roomId) => {
 
-                roomId =
-                    String(
-                        roomId || ""
-                    ).trim();
-
-
                 if (!roomId) {
-
                     return;
-
                 }
 
 
-                // Leave previous room if necessary
-
-                if (
-                    socket.data.roomId
-                ) {
-
-                    leaveRoom(
-                        socket
-                    );
-
-                }
-
-
-                socket.data.roomId =
+                socket.roomId =
                     roomId;
 
 
-                const room =
-                    getRoom(
-                        roomId
+                if (!rooms.has(roomId)) {
+
+                    rooms.set(
+                        roomId,
+                        {
+
+                            camera:
+                                null,
+
+                            viewers:
+                                new Set()
+
+                        }
                     );
 
+                }
 
-                // ==================================================
-                // FIRST DEVICE = CAMERA
-                // ==================================================
+
+                const room =
+                    rooms.get(roomId);
+
+
+                // ==========================================
+                // FIRST USER = CAMERA
+                // ==========================================
 
                 if (!room.camera) {
 
@@ -448,7 +362,7 @@ io.on(
                         socket.id;
 
 
-                    socket.data.role =
+                    socket.role =
                         "camera";
 
 
@@ -464,18 +378,17 @@ io.on(
 
 
                     socket.emit(
-                        "camera-ready",
-                        {
-
-                            viewers:
-                                room.viewers.size
-
-                        }
+                        "camera-ready"
                     );
 
 
                     console.log(
-                        `Camera ${socket.id} started room ${roomId}`
+                        `Camera joined room ${roomId}`
+                    );
+
+
+                    updateViewerCount(
+                        roomId
                     );
 
 
@@ -484,17 +397,17 @@ io.on(
                 }
 
 
-                // ==================================================
-                // EVERY OTHER DEVICE = VIEWER
-                // ==================================================
-
-                socket.data.role =
-                    "viewer";
-
+                // ==========================================
+                // OTHER USERS = VIEWERS
+                // ==========================================
 
                 room.viewers.add(
                     socket.id
                 );
+
+
+                socket.role =
+                    "viewer";
 
 
                 socket.join(
@@ -508,13 +421,6 @@ io.on(
                 );
 
 
-                console.log(
-                    `Viewer ${socket.id} joined room ${roomId}`
-                );
-
-
-                // Tell viewer which camera to connect to
-
                 socket.emit(
                     "camera-available",
                     {
@@ -525,8 +431,6 @@ io.on(
                     }
                 );
 
-
-                // Tell camera that a new viewer arrived
 
                 io.to(
                     room.camera
@@ -541,10 +445,13 @@ io.on(
                 );
 
 
-                // Update viewer count
-
                 updateViewerCount(
                     roomId
+                );
+
+
+                console.log(
+                    `Viewer ${socket.id} joined room ${roomId}`
                 );
 
             }
@@ -552,28 +459,15 @@ io.on(
 
 
         // ==================================================
-        // CAMERA OFFER -> SPECIFIC VIEWER
+        // OFFER
         // ==================================================
 
         socket.on(
             "offer",
-            ({ viewerId, offer }) => {
-
-                if (
-
-                    socket.data.role !==
-                        "camera" ||
-
-                    !viewerId ||
-
-                    !offer
-
-                ) {
-
-                    return;
-
-                }
-
+            ({
+                viewerId,
+                offer
+            }) => {
 
                 io.to(
                     viewerId
@@ -594,28 +488,15 @@ io.on(
 
 
         // ==================================================
-        // VIEWER ANSWER -> CAMERA
+        // ANSWER
         // ==================================================
 
         socket.on(
             "answer",
-            ({ cameraId, answer }) => {
-
-                if (
-
-                    socket.data.role !==
-                        "viewer" ||
-
-                    !cameraId ||
-
-                    !answer
-
-                ) {
-
-                    return;
-
-                }
-
+            ({
+                cameraId,
+                answer
+            }) => {
 
                 io.to(
                     cameraId
@@ -641,20 +522,10 @@ io.on(
 
         socket.on(
             "ice-candidate",
-            ({ targetId, candidate }) => {
-
-                if (
-
-                    !targetId ||
-
-                    !candidate
-
-                ) {
-
-                    return;
-
-                }
-
+            ({
+                targetId,
+                candidate
+            }) => {
 
                 io.to(
                     targetId
@@ -683,7 +554,7 @@ io.on(
             () => {
 
                 console.log(
-                    "Client disconnected:",
+                    "Socket disconnected:",
                     socket.id
                 );
 
@@ -700,67 +571,107 @@ io.on(
 
 
 // ======================================================
+// UPDATE VIEWER COUNT
+// ======================================================
+
+function updateViewerCount(
+    roomId
+) {
+
+    const room =
+        rooms.get(roomId);
+
+
+    if (!room) {
+        return;
+    }
+
+
+    const count =
+        room.viewers.size;
+
+
+    if (room.camera) {
+
+        io.to(
+            room.camera
+        ).emit(
+            "viewer-count",
+            count
+        );
+
+    }
+
+
+    room.viewers.forEach(
+        (viewerId) => {
+
+            io.to(
+                viewerId
+            ).emit(
+                "viewer-count",
+                count
+            );
+
+        }
+    );
+
+}
+
+
+// ======================================================
 // LEAVE ROOM
 // ======================================================
 
-function leaveRoom(socket) {
+function leaveRoom(
+    socket
+) {
 
     const roomId =
-        socket.data.roomId;
+        socket.roomId;
 
 
     if (!roomId) {
-
         return;
-
     }
 
 
     const room =
-        rooms.get(
-            roomId
-        );
+        rooms.get(roomId);
 
 
     if (!room) {
-
         return;
-
     }
 
 
-    // ==================================================
+    // ==========================================
     // CAMERA LEFT
-    // ==================================================
+    // ==========================================
 
     if (
-
-        socket.data.role ===
-            "camera" &&
-
         room.camera ===
-            socket.id
-
+        socket.id
     ) {
 
         room.camera =
             null;
 
 
-        // Tell all viewers that camera is gone
+        room.viewers.forEach(
+            (viewerId) => {
 
-        for (
-            const viewerId
-            of room.viewers
-        ) {
+                io.to(
+                    viewerId
+                ).emit(
+                    "camera-left"
+                );
 
-            io.to(
-                viewerId
-            ).emit(
-                "camera-left"
-            );
+            }
+        );
 
-        }
+
+        room.viewers.clear();
 
 
         console.log(
@@ -770,13 +681,14 @@ function leaveRoom(socket) {
     }
 
 
-    // ==================================================
+    // ==========================================
     // VIEWER LEFT
-    // ==================================================
+    // ==========================================
 
-    if (
-        socket.data.role ===
-            "viewer"
+    else if (
+        room.viewers.has(
+            socket.id
+        )
     ) {
 
         room.viewers.delete(
@@ -784,11 +696,7 @@ function leaveRoom(socket) {
         );
 
 
-        // Tell camera this viewer is gone
-
-        if (
-            room.camera
-        ) {
+        if (room.camera) {
 
             io.to(
                 room.camera
@@ -812,102 +720,31 @@ function leaveRoom(socket) {
     }
 
 
-    socket.leave(
-        roomId
-    );
-
-
-    socket.data.roomId =
-        null;
-
-
-    socket.data.role =
-        null;
-
-
     updateViewerCount(
         roomId
     );
 
 
-    // Remove empty room
+    // ==========================================
+    // DELETE EMPTY ROOM
+    // ==========================================
 
     if (
-
         !room.camera &&
-
         room.viewers.size === 0
-
     ) {
 
         rooms.delete(
             roomId
         );
 
-
-        console.log(
-            `Room deleted: ${roomId}`
-        );
-
     }
 
 }
 
 
 // ======================================================
-// VIEWER COUNT
-// ======================================================
-
-function updateViewerCount(roomId) {
-
-    const room =
-        rooms.get(
-            roomId
-        );
-
-
-    if (!room) {
-
-        return;
-
-    }
-
-
-    const count =
-        room.viewers.size;
-
-
-    if (room.camera) {
-
-        io.to(
-            room.camera
-        ).emit(
-            "viewer-count",
-            count
-        );
-
-    }
-
-
-    for (
-        const viewerId
-        of room.viewers
-    ) {
-
-        io.to(
-            viewerId
-        ).emit(
-            "viewer-count",
-            count
-        );
-
-    }
-
-}
-
-
-// ======================================================
-// HEALTH
+// HEALTH CHECK
 // ======================================================
 
 app.get(
@@ -916,17 +753,13 @@ app.get(
 
         res.json({
 
-            ok:
-                true,
+            ok: true,
 
-            streaming:
-                true,
+            streaming: true,
 
-            recording:
-                true,
+            recording: true,
 
-            storage:
-                true
+            storage: true
 
         });
 
@@ -935,23 +768,23 @@ app.get(
 
 
 // ======================================================
-// START
+// START SERVER
 // ======================================================
+
+const PORT =
+    process.env.PORT || 3000;
+
 
 server.listen(
     PORT,
     () => {
 
         console.log(
-            `Live camera server running on port ${PORT}`
+            `Server running on port ${PORT}`
         );
 
         console.log(
-            "Video recording: ENABLED"
-        );
-
-        console.log(
-            "Google Drive upload: ENABLED"
+            "Google Drive recording upload enabled."
         );
 
     }
