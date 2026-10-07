@@ -8,16 +8,16 @@ const peerConnections = new Map();
 let cameraStarted = false;
 
 // ======================================================
-// RECORDING
+// RECORDING SETTINGS
 // ======================================================
+
+const RECORDING_LENGTH = 15 * 60 * 1000; // 15 minutes
+const RECORDING_CHUNK = 1000; // save recorder data every 1 second
 
 let mediaRecorder = null;
 let recordingChunks = [];
 let recordingTimer = null;
-
-// SAVE EVERY 15 MINUTES
-const RECORDING_LENGTH =
-    15 * 60 * 1000; // 15 minutes
+let recordingMimeType = "video/webm";
 
 // ======================================================
 // HTML
@@ -38,6 +38,9 @@ const statusText =
 const viewerCountText =
     document.getElementById("viewerCount");
 
+const recordingStatusText =
+    document.getElementById("recordingStatus");
+
 // ======================================================
 // WEBRTC
 // ======================================================
@@ -45,8 +48,7 @@ const viewerCountText =
 const configuration = {
     iceServers: [
         {
-            urls:
-                "stun:stun.l.google.com:19302"
+            urls: "stun:stun.l.google.com:19302"
         }
     ]
 };
@@ -71,9 +73,7 @@ async function startCamera() {
 
     if (!roomId) {
 
-        alert(
-            "Enter a Room ID first."
-        );
+        alert("Enter a Room ID first.");
 
         return;
     }
@@ -86,7 +86,6 @@ async function startCamera() {
         statusText.textContent =
             "Requesting camera and microphone...";
 
-        // GET CAMERA
         localStream =
             await navigator.mediaDevices.getUserMedia({
                 video: {
@@ -98,24 +97,28 @@ async function startCamera() {
         localVideo.srcObject =
             localStream;
 
+        localVideo.play().catch(() => {});
+
         cameraStarted = true;
 
         // ==================================================
-        // IMPORTANT
-        // RECORDING STARTS HERE
-        // IT DOES NOT DEPEND ON VIEWERS
+        // START RECORDING BEFORE JOINING ROOM
+        // VIEWERS ARE NOT REQUIRED
         // ==================================================
 
         startRecording();
 
-        // JOIN STREAMING ROOM
+        // ==================================================
+        // JOIN WEBRTC ROOM
+        // ==================================================
+
         socket.emit(
             "join-room",
             roomId
         );
 
         statusText.textContent =
-            "🟢 Camera online — recording automatically";
+            "🟢 Camera online";
 
         startButton.textContent =
             "Camera Running";
@@ -135,36 +138,27 @@ async function startCamera() {
             "Could not access the camera or microphone."
         );
 
-        startButton.disabled =
-            false;
-
-        roomInput.disabled =
-            false;
+        startButton.disabled = false;
+        roomInput.disabled = false;
     }
 }
 
 // ======================================================
-// RECORDING MIME TYPE
+// GET SUPPORTED MIME TYPE
 // ======================================================
 
 function getRecordingMimeType() {
 
     const types = [
-
         "video/webm;codecs=vp9,opus",
-
         "video/webm;codecs=vp8,opus",
-
         "video/webm"
-
     ];
 
     for (const type of types) {
 
         if (
-            MediaRecorder.isTypeSupported(
-                type
-            )
+            MediaRecorder.isTypeSupported(type)
         ) {
 
             return type;
@@ -183,7 +177,7 @@ function startRecording() {
     if (!localStream) {
 
         console.error(
-            "No camera stream available for recording."
+            "No camera stream available."
         );
 
         return;
@@ -192,27 +186,33 @@ function startRecording() {
     if (!window.MediaRecorder) {
 
         console.error(
-            "MediaRecorder is not supported by this browser."
+            "MediaRecorder is not supported."
         );
+
+        if (recordingStatusText) {
+            recordingStatusText.textContent =
+                "❌ Recording not supported";
+        }
 
         return;
     }
 
     if (recordingTimer) {
 
-        clearTimeout(
-            recordingTimer
-        );
+        clearTimeout(recordingTimer);
 
         recordingTimer = null;
     }
 
+    recordingChunks = [];
+
     const mimeType =
         getRecordingMimeType();
 
-    try {
+    recordingMimeType =
+        mimeType || "video/webm";
 
-        recordingChunks = [];
+    try {
 
         const options =
             mimeType
@@ -226,7 +226,7 @@ function startRecording() {
             );
 
         // ==================================================
-        // RECORDING DATA
+        // DATA ARRIVES EVERY SECOND
         // ==================================================
 
         mediaRecorder.ondataavailable =
@@ -244,14 +244,32 @@ function startRecording() {
             };
 
         // ==================================================
-        // RECORDING FINISHED
+        // RECORDING STARTED
+        // ==================================================
+
+        mediaRecorder.onstart =
+            () => {
+
+                console.log(
+                    "🎥 Recording started."
+                );
+
+                if (recordingStatusText) {
+
+                    recordingStatusText.textContent =
+                        "🔴 Recording • Saves every 15 minutes";
+                }
+            };
+
+        // ==================================================
+        // RECORDING STOPPED
         // ==================================================
 
         mediaRecorder.onstop =
             async () => {
 
                 console.log(
-                    "15-minute recording finished."
+                    "⏱️ 15-minute recording finished."
                 );
 
                 const chunks =
@@ -259,13 +277,17 @@ function startRecording() {
 
                 recordingChunks = [];
 
-                if (
-                    chunks.length === 0
-                ) {
+                if (!chunks.length) {
 
-                    console.log(
-                        "No recording data."
+                    console.error(
+                        "❌ No recording data was produced."
                     );
+
+                    if (recordingStatusText) {
+
+                        recordingStatusText.textContent =
+                            "⚠️ No recording data";
+                    }
 
                     startNextRecording();
 
@@ -277,8 +299,7 @@ function startRecording() {
                         chunks,
                         {
                             type:
-                                mediaRecorder.mimeType ||
-                                "video/webm"
+                                recordingMimeType
                         }
                     );
 
@@ -288,12 +309,17 @@ function startRecording() {
                     "bytes"
                 );
 
-                // UPLOAD TO GOOGLE DRIVE
+                if (recordingStatusText) {
+
+                    recordingStatusText.textContent =
+                        "☁️ Uploading to Google Drive...";
+                }
+
                 await uploadRecording(
                     blob
                 );
 
-                // START NEXT 15-MINUTE RECORDING
+                // Start next recording
                 startNextRecording();
             };
 
@@ -305,23 +331,25 @@ function startRecording() {
             (event) => {
 
                 console.error(
-                    "Recording error:",
+                    "❌ MediaRecorder error:",
                     event.error
                 );
+
+                if (recordingStatusText) {
+
+                    recordingStatusText.textContent =
+                        "❌ Recording error";
+                }
             };
 
         // ==================================================
-        // START
+        // START RECORDING
+        //
+        // 1000 = dataavailable every 1 second
         // ==================================================
 
-        mediaRecorder.start();
-
-        console.log(
-            "🎥 Recording started."
-        );
-
-        console.log(
-            "⏱️ Next save in 15 minutes."
+        mediaRecorder.start(
+            RECORDING_CHUNK
         );
 
         // ==================================================
@@ -342,10 +370,6 @@ function startRecording() {
                             "⏱️ 15 minutes reached."
                         );
 
-                        console.log(
-                            "☁️ Saving recording to Google Drive..."
-                        );
-
                         mediaRecorder.stop();
                     }
 
@@ -359,6 +383,12 @@ function startRecording() {
             "Could not start recording:",
             error
         );
+
+        if (recordingStatusText) {
+
+            recordingStatusText.textContent =
+                "❌ Could not start recording";
+        }
     }
 }
 
@@ -397,24 +427,23 @@ function startNextRecording() {
 }
 
 // ======================================================
-// UPLOAD RECORDING TO GOOGLE DRIVE
+// UPLOAD TO GOOGLE DRIVE
 // ======================================================
 
-async function uploadRecording(
-    blob
-) {
+async function uploadRecording(blob) {
 
     try {
 
+        const filename =
+            createRecordingFilename();
+
         console.log(
-            "☁️ Uploading recording to Google Drive..."
+            "☁️ Uploading:",
+            filename
         );
 
         const formData =
             new FormData();
-
-        const filename =
-            createRecordingFilename();
 
         formData.append(
             "recording",
@@ -426,16 +455,28 @@ async function uploadRecording(
             await fetch(
                 "/upload-recording",
                 {
-                    method:
-                        "POST",
-
-                    body:
-                        formData
+                    method: "POST",
+                    body: formData
                 }
             );
 
-        const result =
-            await response.json();
+        const text =
+            await response.text();
+
+        let result;
+
+        try {
+
+            result =
+                JSON.parse(text);
+
+        } catch {
+
+            throw new Error(
+                "Server returned an invalid response: " +
+                text
+            );
+        }
 
         if (
             !response.ok ||
@@ -449,24 +490,33 @@ async function uploadRecording(
         }
 
         console.log(
-            "✅ Recording uploaded successfully:"
-        );
-
-        console.log(
+            "✅ Uploaded to Google Drive:",
             result.fileName
         );
+
+        if (recordingStatusText) {
+
+            recordingStatusText.textContent =
+                "🟢 Recording • Last video saved to Google Drive";
+        }
 
     } catch (error) {
 
         console.error(
-            "❌ Recording upload failed:",
+            "❌ Google Drive upload failed:",
             error
         );
+
+        if (recordingStatusText) {
+
+            recordingStatusText.textContent =
+                "⚠️ Upload failed — check console";
+        }
     }
 }
 
 // ======================================================
-// CREATE RECORDING FILENAME
+// CREATE FILE NAME
 // ======================================================
 
 function createRecordingFilename() {
@@ -480,42 +530,27 @@ function createRecordingFilename() {
     const month =
         String(
             now.getMonth() + 1
-        ).padStart(
-            2,
-            "0"
-        );
+        ).padStart(2, "0");
 
     const day =
         String(
             now.getDate()
-        ).padStart(
-            2,
-            "0"
-        );
+        ).padStart(2, "0");
 
     const hours =
         String(
             now.getHours()
-        ).padStart(
-            2,
-            "0"
-        );
+        ).padStart(2, "0");
 
     const minutes =
         String(
             now.getMinutes()
-        ).padStart(
-            2,
-            "0"
-        );
+        ).padStart(2, "0");
 
     const seconds =
         String(
             now.getSeconds()
-        ).padStart(
-            2,
-            "0"
-        );
+        ).padStart(2, "0");
 
     return (
         `CCTV_${roomId}_${year}-${month}-${day}_${hours}-${minutes}-${seconds}.webm`
@@ -530,12 +565,11 @@ socket.on(
     "role",
     (role) => {
 
-        if (
-            role === "camera"
-        ) {
+        if (role === "camera") {
 
             statusText.textContent =
-                "🟢 Camera LIVE — recording";
+                "🟢 Camera LIVE";
+
         }
     }
 );
@@ -595,7 +629,6 @@ async function createConnectionForViewer(
         peerConnection
     );
 
-    // ADD CAMERA TRACKS
     localStream
         .getTracks()
         .forEach(
@@ -608,13 +641,10 @@ async function createConnectionForViewer(
             }
         );
 
-    // ICE CANDIDATE
     peerConnection.onicecandidate =
         (event) => {
 
-            if (
-                event.candidate
-            ) {
+            if (event.candidate) {
 
                 socket.emit(
                     "ice-candidate",
@@ -629,7 +659,6 @@ async function createConnectionForViewer(
             }
         };
 
-    // CONNECTION STATE
     peerConnection.onconnectionstatechange =
         () => {
 
@@ -639,7 +668,6 @@ async function createConnectionForViewer(
             );
         };
 
-    // CREATE OFFER
     const offer =
         await peerConnection.createOffer();
 
@@ -692,7 +720,7 @@ socket.on(
 );
 
 // ======================================================
-// ICE CANDIDATE
+// ICE
 // ======================================================
 
 socket.on(
@@ -786,10 +814,13 @@ socket.on(
             `👀 Viewers: ${count}`
         );
 
+        // IMPORTANT:
+        // Recording does NOT stop when count = 0.
+
         if (count === 0) {
 
             console.log(
-                "👀 No viewers. Recording continues normally."
+                "👀 0 viewers — recording continues."
             );
         }
     }
@@ -816,8 +847,7 @@ window.addEventListener(
     "beforeunload",
     () => {
 
-        cameraStarted =
-            false;
+        cameraStarted = false;
 
         if (recordingTimer) {
 
@@ -835,7 +865,6 @@ window.addEventListener(
             mediaRecorder.stop();
         }
 
-        // CLOSE WEBRTC CONNECTIONS
         for (
             const connection
             of peerConnections.values()
@@ -846,7 +875,6 @@ window.addEventListener(
 
         peerConnections.clear();
 
-        // STOP CAMERA
         if (localStream) {
 
             localStream
