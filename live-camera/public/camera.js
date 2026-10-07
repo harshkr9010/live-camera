@@ -7,7 +7,6 @@ const peerConnections = new Map();
 
 let cameraStarted = false;
 
-
 // ======================================================
 // RECORDING
 // ======================================================
@@ -16,9 +15,9 @@ let mediaRecorder = null;
 let recordingChunks = [];
 let recordingTimer = null;
 
+// SAVE EVERY 15 MINUTES
 const RECORDING_LENGTH =
-    30 * 60 * 1000; // 30 minutes
-
+    15 * 60 * 1000; // 15 minutes
 
 // ======================================================
 // HTML
@@ -39,22 +38,18 @@ const statusText =
 const viewerCountText =
     document.getElementById("viewerCount");
 
-
 // ======================================================
 // WEBRTC
 // ======================================================
 
 const configuration = {
-
     iceServers: [
         {
             urls:
                 "stun:stun.l.google.com:19302"
         }
     ]
-
 };
-
 
 // ======================================================
 // START CAMERA
@@ -65,17 +60,14 @@ startButton.addEventListener(
     startCamera
 );
 
-
 async function startCamera() {
 
     if (cameraStarted) {
         return;
     }
 
-
     roomId =
         roomInput.value.trim();
-
 
     if (!roomId) {
 
@@ -86,73 +78,47 @@ async function startCamera() {
         return;
     }
 
-
     startButton.disabled = true;
     roomInput.disabled = true;
-
 
     try {
 
         statusText.textContent =
             "Requesting camera and microphone...";
 
-
-        // ==================================================
-        // GET CAMERA + MICROPHONE
-        // ==================================================
-
+        // GET CAMERA
         localStream =
             await navigator.mediaDevices.getUserMedia({
-
                 video: {
                     facingMode: "environment"
                 },
-
                 audio: true
-
             });
-
-
-        // ==================================================
-        // SHOW CAMERA LOCALLY
-        // ==================================================
 
         localVideo.srcObject =
             localStream;
 
-
         cameraStarted = true;
 
-
         // ==================================================
-        // START RECORDING IMMEDIATELY
-        //
-        // IMPORTANT:
-        // This happens BEFORE joining the room.
-        //
-        // Therefore recording does NOT depend on viewers.
+        // IMPORTANT
+        // RECORDING STARTS HERE
+        // IT DOES NOT DEPEND ON VIEWERS
         // ==================================================
 
         startRecording();
 
-
-        // ==================================================
-        // JOIN CCTV ROOM
-        // ==================================================
-
+        // JOIN STREAMING ROOM
         socket.emit(
             "join-room",
             roomId
         );
 
-
         statusText.textContent =
             "🟢 Camera online — recording automatically";
 
-
         startButton.textContent =
             "Camera Running";
-
 
     } catch (error) {
 
@@ -161,30 +127,24 @@ async function startCamera() {
             error
         );
 
-
         statusText.textContent =
             "❌ Camera could not start";
-
 
         alert(
             error.message ||
             "Could not access the camera or microphone."
         );
 
-
         startButton.disabled =
             false;
 
         roomInput.disabled =
             false;
-
     }
-
 }
 
-
 // ======================================================
-// GET RECORDING MIME TYPE
+// RECORDING MIME TYPE
 // ======================================================
 
 function getRecordingMimeType() {
@@ -199,10 +159,7 @@ function getRecordingMimeType() {
 
     ];
 
-
-    for (
-        const type of types
-        ) {
+    for (const type of types) {
 
         if (
             MediaRecorder.isTypeSupported(
@@ -211,16 +168,11 @@ function getRecordingMimeType() {
         ) {
 
             return type;
-
         }
-
     }
 
-
     return "";
-
 }
-
 
 // ======================================================
 // START RECORDING
@@ -235,9 +187,7 @@ function startRecording() {
         );
 
         return;
-
     }
-
 
     if (!window.MediaRecorder) {
 
@@ -246,11 +196,7 @@ function startRecording() {
         );
 
         return;
-
     }
-
-
-    // Stop any previous timer
 
     if (recordingTimer) {
 
@@ -258,38 +204,26 @@ function startRecording() {
             recordingTimer
         );
 
+        recordingTimer = null;
     }
-
 
     const mimeType =
         getRecordingMimeType();
 
-
     try {
 
         recordingChunks = [];
-
 
         const options =
             mimeType
                 ? { mimeType: mimeType }
                 : undefined;
 
-
-        // ==================================================
-        // IMPORTANT
-        //
-        // MediaRecorder records the CAMERA STREAM directly.
-        //
-        // It does NOT depend on WebRTC viewers.
-        // ==================================================
-
         mediaRecorder =
             new MediaRecorder(
                 localStream,
                 options
             );
-
 
         // ==================================================
         // RECORDING DATA
@@ -306,30 +240,24 @@ function startRecording() {
                     recordingChunks.push(
                         event.data
                     );
-
                 }
-
             };
 
-
         // ==================================================
-        // RECORDING STOPPED
+        // RECORDING FINISHED
         // ==================================================
 
         mediaRecorder.onstop =
             async () => {
 
                 console.log(
-                    "30-minute recording finished."
+                    "15-minute recording finished."
                 );
-
 
                 const chunks =
                     recordingChunks;
 
-
                 recordingChunks = [];
-
 
                 if (
                     chunks.length === 0
@@ -339,13 +267,10 @@ function startRecording() {
                         "No recording data."
                     );
 
-
                     startNextRecording();
 
                     return;
-
                 }
-
 
                 const blob =
                     new Blob(
@@ -357,31 +282,20 @@ function startRecording() {
                         }
                     );
 
-
                 console.log(
                     "Recording size:",
                     blob.size,
                     "bytes"
                 );
 
-
-                // ==================================================
                 // UPLOAD TO GOOGLE DRIVE
-                // ==================================================
-
                 await uploadRecording(
                     blob
                 );
 
-
-                // ==================================================
-                // START NEXT 30-MINUTE RECORDING
-                // ==================================================
-
+                // START NEXT 15-MINUTE RECORDING
                 startNextRecording();
-
             };
-
 
         // ==================================================
         // RECORDING ERROR
@@ -394,9 +308,7 @@ function startRecording() {
                     "Recording error:",
                     event.error
                 );
-
             };
-
 
         // ==================================================
         // START
@@ -404,14 +316,16 @@ function startRecording() {
 
         mediaRecorder.start();
 
-
         console.log(
-            "Recording started."
+            "🎥 Recording started."
         );
 
+        console.log(
+            "⏱️ Next save in 15 minutes."
+        );
 
         // ==================================================
-        // STOP AFTER 30 MINUTES
+        // STOP AFTER 15 MINUTES
         // ==================================================
 
         recordingTimer =
@@ -425,18 +339,19 @@ function startRecording() {
                     ) {
 
                         console.log(
-                            "30 minutes reached. Saving recording..."
+                            "⏱️ 15 minutes reached."
                         );
 
+                        console.log(
+                            "☁️ Saving recording to Google Drive..."
+                        );
 
                         mediaRecorder.stop();
-
                     }
 
                 },
                 RECORDING_LENGTH
             );
-
 
     } catch (error) {
 
@@ -444,11 +359,8 @@ function startRecording() {
             "Could not start recording:",
             error
         );
-
     }
-
 }
-
 
 // ======================================================
 // START NEXT RECORDING
@@ -462,14 +374,11 @@ function startNextRecording() {
     ) {
 
         return;
-
     }
 
-
     console.log(
-        "Preparing next recording..."
+        "Preparing next 15-minute recording..."
     );
-
 
     setTimeout(
         () => {
@@ -480,18 +389,15 @@ function startNextRecording() {
             ) {
 
                 startRecording();
-
             }
 
         },
         1000
     );
-
 }
 
-
 // ======================================================
-// UPLOAD RECORDING
+// UPLOAD RECORDING TO GOOGLE DRIVE
 // ======================================================
 
 async function uploadRecording(
@@ -501,24 +407,20 @@ async function uploadRecording(
     try {
 
         console.log(
-            "Uploading recording to Google Drive..."
+            "☁️ Uploading recording to Google Drive..."
         );
-
 
         const formData =
             new FormData();
 
-
         const filename =
             createRecordingFilename();
-
 
         formData.append(
             "recording",
             blob,
             filename
         );
-
 
         const response =
             await fetch(
@@ -532,10 +434,8 @@ async function uploadRecording(
                 }
             );
 
-
         const result =
             await response.json();
-
 
         if (
             !response.ok ||
@@ -546,15 +446,15 @@ async function uploadRecording(
                 result.error ||
                 "Upload failed."
             );
-
         }
 
-
         console.log(
-            "✅ Recording uploaded:",
-            result.fileName
+            "✅ Recording uploaded successfully:"
         );
 
+        console.log(
+            result.fileName
+        );
 
     } catch (error) {
 
@@ -562,14 +462,11 @@ async function uploadRecording(
             "❌ Recording upload failed:",
             error
         );
-
     }
-
 }
 
-
 // ======================================================
-// CREATE RECORDING FILE NAME
+// CREATE RECORDING FILENAME
 // ======================================================
 
 function createRecordingFilename() {
@@ -577,10 +474,8 @@ function createRecordingFilename() {
     const now =
         new Date();
 
-
     const year =
         now.getFullYear();
-
 
     const month =
         String(
@@ -590,7 +485,6 @@ function createRecordingFilename() {
             "0"
         );
 
-
     const day =
         String(
             now.getDate()
@@ -598,7 +492,6 @@ function createRecordingFilename() {
             2,
             "0"
         );
-
 
     const hours =
         String(
@@ -608,7 +501,6 @@ function createRecordingFilename() {
             "0"
         );
 
-
     const minutes =
         String(
             now.getMinutes()
@@ -616,7 +508,6 @@ function createRecordingFilename() {
             2,
             "0"
         );
-
 
     const seconds =
         String(
@@ -626,13 +517,10 @@ function createRecordingFilename() {
             "0"
         );
 
-
     return (
         `CCTV_${roomId}_${year}-${month}-${day}_${hours}-${minutes}-${seconds}.webm`
     );
-
 }
-
 
 // ======================================================
 // CAMERA ROLE
@@ -648,12 +536,9 @@ socket.on(
 
             statusText.textContent =
                 "🟢 Camera LIVE — recording";
-
         }
-
     }
 );
-
 
 // ======================================================
 // VIEWER JOINED
@@ -667,12 +552,10 @@ socket.on(
             return;
         }
 
-
         console.log(
             "Viewer joined:",
             viewerId
         );
-
 
         try {
 
@@ -686,12 +569,9 @@ socket.on(
                 "Could not create viewer connection:",
                 error
             );
-
         }
-
     }
 );
-
 
 // ======================================================
 // CREATE WEBRTC CONNECTION
@@ -705,23 +585,17 @@ async function createConnectionForViewer(
         viewerId
     );
 
-
     const peerConnection =
         new RTCPeerConnection(
             configuration
         );
-
 
     peerConnections.set(
         viewerId,
         peerConnection
     );
 
-
-    // ==================================================
-    // SEND CAMERA TO VIEWER
-    // ==================================================
-
+    // ADD CAMERA TRACKS
     localStream
         .getTracks()
         .forEach(
@@ -731,15 +605,10 @@ async function createConnectionForViewer(
                     track,
                     localStream
                 );
-
             }
         );
 
-
-    // ==================================================
-    // ICE
-    // ==================================================
-
+    // ICE CANDIDATE
     peerConnection.onicecandidate =
         (event) => {
 
@@ -757,16 +626,10 @@ async function createConnectionForViewer(
                             event.candidate
                     }
                 );
-
             }
-
         };
 
-
-    // ==================================================
     // CONNECTION STATE
-    // ==================================================
-
     peerConnection.onconnectionstatechange =
         () => {
 
@@ -774,34 +637,24 @@ async function createConnectionForViewer(
                 `Viewer ${viewerId}:`,
                 peerConnection.connectionState
             );
-
         };
 
-
-    // ==================================================
-    // OFFER
-    // ==================================================
-
+    // CREATE OFFER
     const offer =
         await peerConnection.createOffer();
-
 
     await peerConnection.setLocalDescription(
         offer
     );
 
-
     socket.emit(
         "offer",
         {
             viewerId,
-
             offer
         }
     );
-
 }
-
 
 // ======================================================
 // ANSWER
@@ -816,11 +669,9 @@ socket.on(
                 viewerId
             );
 
-
         if (!peerConnection) {
             return;
         }
-
 
         try {
 
@@ -830,19 +681,15 @@ socket.on(
                 )
             );
 
-
         } catch (error) {
 
             console.error(
                 "Answer error:",
                 error
             );
-
         }
-
     }
 );
-
 
 // ======================================================
 // ICE CANDIDATE
@@ -860,11 +707,9 @@ socket.on(
                 senderId
             );
 
-
         if (!peerConnection) {
             return;
         }
-
 
         try {
 
@@ -880,12 +725,9 @@ socket.on(
                 "ICE error:",
                 error
             );
-
         }
-
     }
 );
-
 
 // ======================================================
 // VIEWER LEFT
@@ -900,14 +742,11 @@ socket.on(
             viewerId
         );
 
-
         closeViewerConnection(
             viewerId
         );
-
     }
 );
-
 
 // ======================================================
 // CLOSE VIEWER CONNECTION
@@ -922,7 +761,6 @@ function closeViewerConnection(
             viewerId
         );
 
-
     if (connection) {
 
         connection.close();
@@ -930,11 +768,8 @@ function closeViewerConnection(
         peerConnections.delete(
             viewerId
         );
-
     }
-
 }
-
 
 // ======================================================
 // VIEWER COUNT
@@ -947,12 +782,21 @@ socket.on(
         viewerCountText.textContent =
             `Viewers: ${count}`;
 
+        console.log(
+            `👀 Viewers: ${count}`
+        );
+
+        if (count === 0) {
+
+            console.log(
+                "👀 No viewers. Recording continues normally."
+            );
+        }
     }
 );
 
-
 // ======================================================
-// SOCKET DISCONNECT
+// SOCKET DISCONNECTED
 // ======================================================
 
 socket.on(
@@ -961,13 +805,11 @@ socket.on(
 
         statusText.textContent =
             "⚠️ Signaling server disconnected";
-
     }
 );
 
-
 // ======================================================
-// PAGE CLOSE
+// PAGE CLOSING
 // ======================================================
 
 window.addEventListener(
@@ -977,15 +819,12 @@ window.addEventListener(
         cameraStarted =
             false;
 
-
         if (recordingTimer) {
 
             clearTimeout(
                 recordingTimer
             );
-
         }
-
 
         if (
             mediaRecorder &&
@@ -994,23 +833,20 @@ window.addEventListener(
         ) {
 
             mediaRecorder.stop();
-
         }
 
-
+        // CLOSE WEBRTC CONNECTIONS
         for (
             const connection
             of peerConnections.values()
         ) {
 
             connection.close();
-
         }
-
 
         peerConnections.clear();
 
-
+        // STOP CAMERA
         if (localStream) {
 
             localStream
@@ -1019,8 +855,6 @@ window.addEventListener(
                     track =>
                         track.stop()
                 );
-
         }
-
     }
 );
