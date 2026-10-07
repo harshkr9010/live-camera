@@ -10,7 +10,7 @@
         content="width=device-width, initial-scale=1.0"
     >
 
-    <title>Watch Live</title>
+    <title>Watch Live - Live CCTV</title>
 
     <link
         rel="stylesheet"
@@ -21,49 +21,231 @@
 
 <body>
 
-    <div class="container">
+    <div class="viewer-page">
 
-        <h1>📺 Watch Live</h1>
+        <!-- HEADER -->
 
-        <p class="subtitle">
-            Live video + audio
-        </p>
+        <header class="viewer-header">
 
-        <input
-            id="roomId"
-            type="text"
-            placeholder="Enter Room ID"
-            autocomplete="off"
-        >
+            <a
+                href="index.html"
+                class="back-button"
+            >
+                ← Home
+            </a>
 
-        <button id="watchButton">
-            Watch Live
-        </button>
+            <div class="viewer-title">
 
-        <video
-            id="remoteVideo"
-            autoplay
-            playsinline
-            controls
-        ></video>
+                <div class="viewer-title-icon">
+                    📺
+                </div>
 
-        <div class="status-box">
+                <div>
 
-            <p id="status">
-                Not connected
-            </p>
+                    <h1>
+                        Live CCTV
+                    </h1>
 
-            <p id="viewerCount">
-                Viewers: 0
-            </p>
+                    <p>
+                        Remote camera viewer
+                    </p>
 
-        </div>
+                </div>
 
-        <p class="notice">
-            🔴 Live stream only — nothing is recorded or saved.
-        </p>
+            </div>
+
+            <div class="live-badge">
+
+                <span></span>
+
+                LIVE
+
+            </div>
+
+        </header>
+
+
+        <!-- MAIN -->
+
+        <main class="viewer-main">
+
+            <section class="viewer-card">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <p class="section-label">
+                            REMOTE MONITORING
+                        </p>
+
+                        <h2>
+                            Watch Live
+                        </h2>
+
+                    </div>
+
+                </div>
+
+
+                <!-- ROOM -->
+
+                <div class="room-section">
+
+                    <label for="roomId">
+                        Room ID
+                    </label>
+
+                    <input
+                        id="roomId"
+                        type="text"
+                        placeholder="Enter Camera Room ID"
+                        autocomplete="off"
+                    >
+
+                    <p class="input-help">
+                        Enter the Room ID used by the camera.
+                    </p>
+
+                </div>
+
+
+                <!-- WATCH BUTTON -->
+
+                <button
+                    id="watchButton"
+                    class="watch-button"
+                >
+                    📺 Watch Live
+                </button>
+
+
+                <!-- STATUS -->
+
+                <div class="viewer-status">
+
+                    <span>
+                        Status
+                    </span>
+
+                    <strong id="status">
+                        Waiting to connect
+                    </strong>
+
+                </div>
+
+
+                <!-- VIDEO -->
+
+                <div class="video-section">
+
+                    <div class="video-header">
+
+                        <span>
+                            LIVE CAMERA
+                        </span>
+
+                        <span id="viewerCount">
+                            Viewers: 0
+                        </span>
+
+                    </div>
+
+                    <div class="remote-video-container">
+
+                        <video
+                            id="remoteVideo"
+                            autoplay
+                            playsinline
+                            controls
+                        ></video>
+
+                        <div
+                            id="videoPlaceholder"
+                            class="video-placeholder"
+                        >
+
+                            <div>
+                                📹
+                            </div>
+
+                            <p>
+                                Waiting for camera...
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+
+                <!-- CONNECTION INFO -->
+
+                <div class="connection-info">
+
+                    <div class="connection-item">
+
+                        <span class="connection-icon">
+                            🔴
+                        </span>
+
+                        <div>
+
+                            <strong>
+                                Live Stream
+                            </strong>
+
+                            <p>
+                                Real-time camera video
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="connection-item">
+
+                        <span class="connection-icon">
+                            🔒
+                        </span>
+
+                        <div>
+
+                            <strong>
+                                Room Connection
+                            </strong>
+
+                            <p>
+                                Connect using your Room ID
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </main>
+
+
+        <footer class="viewer-footer">
+
+            <span>
+                Live CCTV
+            </span>
+
+            <span>
+                WebRTC • Live Monitoring
+            </span>
+
+        </footer>
 
     </div>
+
 
     <script src="/socket.io/socket.io.js"></script>
 
