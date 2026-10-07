@@ -10,7 +10,7 @@
         content="width=device-width, initial-scale=1.0"
     >
 
-    <title>Camera - Live Stream</title>
+    <title>Camera - Live CCTV</title>
 
     <link
         rel="stylesheet"
@@ -21,49 +21,242 @@
 
 <body>
 
-    <div class="container">
+    <div class="camera-page">
 
-        <h1>📹 Camera</h1>
+        <!-- HEADER -->
 
-        <p class="subtitle">
-            Live video + audio
-        </p>
+        <header class="camera-header">
 
-        <input
-            id="roomId"
-            type="text"
-            placeholder="Enter Room ID"
-            autocomplete="off"
-        >
+            <a
+                href="index.html"
+                class="back-button"
+            >
+                ← Home
+            </a>
 
-        <button id="startButton">
-            Start Camera
-        </button>
+            <div class="camera-title">
 
-        <video
-            id="localVideo"
-            autoplay
-            muted
-            playsinline
-        ></video>
+                <div class="camera-title-icon">
+                    📹
+                </div>
 
-        <div class="status-box">
+                <div>
 
-            <p id="status">
-                Camera is OFF
-            </p>
+                    <h1>
+                        CCTV Camera
+                    </h1>
 
-            <p id="viewerCount">
-                Viewers: 0
-            </p>
+                    <p>
+                        Camera monitoring
+                    </p>
 
-        </div>
+                </div>
 
-        <p class="notice">
-            🔴 Live only — video and audio are not recorded or saved.
-        </p>
+            </div>
+
+            <div class="online-badge">
+
+                <span></span>
+
+                Online System
+
+            </div>
+
+        </header>
+
+
+        <!-- MAIN -->
+
+        <main class="camera-main">
+
+            <section class="camera-card">
+
+                <div class="section-heading">
+
+                    <div>
+
+                        <p class="section-label">
+                            CAMERA DEVICE
+                        </p>
+
+                        <h2>
+                            Start Camera
+                        </h2>
+
+                    </div>
+
+                </div>
+
+
+                <!-- ROOM -->
+
+                <div class="room-section">
+
+                    <label for="roomId">
+                        Room ID
+                    </label>
+
+                    <input
+                        id="roomId"
+                        type="text"
+                        placeholder="Enter Room ID"
+                        autocomplete="off"
+                    >
+
+                    <p class="input-help">
+                        Use the same Room ID on the viewer device.
+                    </p>
+
+                </div>
+
+
+                <!-- START BUTTON -->
+
+                <button
+                    id="startButton"
+                    class="start-camera-button"
+                >
+                    🎥 Start Camera
+                </button>
+
+
+                <!-- STATUS -->
+
+                <div class="status-panel">
+
+                    <div class="status-row">
+
+                        <span>
+                            Camera Status
+                        </span>
+
+                        <strong id="status">
+                            Camera not started
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row">
+
+                        <span>
+                            Viewers
+                        </span>
+
+                        <strong id="viewerCount">
+                            Viewers: 0
+                        </strong>
+
+                    </div>
+
+
+                    <div class="status-row recording-row">
+
+                        <span>
+                            Recording
+                        </span>
+
+                        <strong
+                            id="recordingStatus"
+                        >
+                            Waiting for camera
+                        </strong>
+
+                    </div>
+
+                </div>
+
+
+                <!-- VIDEO -->
+
+                <div class="video-section">
+
+                    <div class="video-header">
+
+                        <span>
+                            CAMERA PREVIEW
+                        </span>
+
+                        <span>
+                            15 MIN AUTO SAVE
+                        </span>
+
+                    </div>
+
+                    <video
+                        id="localVideo"
+                        autoplay
+                        muted
+                        playsinline
+                    ></video>
+
+                </div>
+
+
+                <!-- INFORMATION -->
+
+                <div class="info-box">
+
+                    <div class="info-icon">
+                        ☁️
+                    </div>
+
+                    <div>
+
+                        <strong>
+                            Automatic Google Drive Recording
+                        </strong>
+
+                        <p>
+                            The camera records continuously
+                            and saves a new video to Google
+                            Drive every 15 minutes.
+                        </p>
+
+                    </div>
+
+                </div>
+
+                <div class="info-box">
+
+                    <div class="info-icon">
+                        👁️
+                    </div>
+
+                    <div>
+
+                        <strong>
+                            Recording does not require viewers
+                        </strong>
+
+                        <p>
+                            Even when the viewer count is 0,
+                            the camera continues recording.
+                        </p>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </main>
+
+
+        <footer class="camera-footer">
+
+            <span>
+                Live CCTV
+            </span>
+
+            <span>
+                WebRTC • Google Drive Recording
+            </span>
+
+        </footer>
 
     </div>
+
 
     <script src="/socket.io/socket.io.js"></script>
 
